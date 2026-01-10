@@ -1,0 +1,136 @@
+"use client"
+
+import { useState } from 'react'
+import * as React from 'react'
+import { useParams } from 'next/navigation'
+import { useTranslations } from 'next-intl'
+import { getTextDirection } from '@/lib/i18n'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog-animated'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { cn } from '@/lib/utils'
+
+interface DeleteCustomerDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess?: () => void
+  customerName: string
+  customerId: string
+}
+
+export function DeleteCustomerDialog({ 
+  open, 
+  onOpenChange, 
+  onSuccess, 
+  customerName,
+  customerId 
+}: DeleteCustomerDialogProps) {
+  const params = useParams()
+  const locale = (params?.locale as string) || 'ku'
+  const t = useTranslations('customers.delete')
+  const fontClass = locale === 'ku' ? 'font-kurdish' : 'font-engar'
+  const direction = getTextDirection(locale as 'ku' | 'en' | 'ar')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleDelete = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`/api/customers/${customerId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete customer')
+      }
+
+      setIsLoading(false)
+      onOpenChange(false)
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (err) {
+      console.error('Error deleting customer:', err)
+      setError(err instanceof Error ? err.message : 'Failed to delete customer')
+      setIsLoading(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setError(null)
+    onOpenChange(false)
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent 
+        className={cn("sm:max-w-md", fontClass)} 
+        style={{ direction } as React.CSSProperties}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle 
+            className={cn(direction === 'rtl' && 'text-right', fontClass)}
+            style={{ direction } as React.CSSProperties}
+          >
+            {t('title')}
+          </AlertDialogTitle>
+          <AlertDialogDescription 
+            className={cn(direction === 'rtl' && 'text-right', fontClass)}
+            style={{ direction } as React.CSSProperties}
+          >
+            {t('description')}
+            <br />
+            <strong className={cn("mt-2 block", fontClass)}>{customerName}</strong>
+            <br />
+            {t('cannotUndo')}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        {error && (
+          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel
+            onClick={handleCancel}
+            disabled={isLoading}
+            className={fontClass}
+          >
+            {t('cancel')}
+          </AlertDialogCancel>
+          <Button
+            onClick={handleDelete}
+            disabled={isLoading}
+            variant="destructive"
+            className={fontClass}
+          >
+            {isLoading ? (
+              <>
+                <Spinner className="mr-2 h-4 w-4" />
+                {t('deleting')}
+              </>
+            ) : (
+              t('delete')
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+

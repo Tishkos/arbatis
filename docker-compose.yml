@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: arbati-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-arbati}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arbati_password}
+      POSTGRES_DB: ${POSTGRES_DB:-arbati}
+    # Database port should NOT be exposed to internet in production
+    # Remove this line or comment it out for production
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-arbati}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arbati-network
+
+  # Next.js Web Application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbati-web
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-arbati}:${POSTGRES_PASSWORD:-arbati_password}@db:5432/${POSTGRES_DB:-arbati}?schema=public
+      - AUTH_SECRET=${AUTH_SECRET}
+      - JWT_SECRET=${JWT_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - EMAIL_FROM=${EMAIL_FROM:-noreply@arbati.com}
+      - APPROVAL_EMAIL=${APPROVAL_EMAIL:-admin@arbati.com}
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - arbati-network
+    volumes:
+      # Persist file uploads (images, attachments)
+      - ./data/public/products:/app/public/products
+      - ./data/public/attachments:/app/public/attachments
+      - ./data/public/profiles:/app/public/profiles
+      - ./data/public/uploads:/app/public/uploads
+      # Persist backups
+      - ./data/backups:/app/backups
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Worker service for background jobs
+  # worker:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.worker
+  #   container_name: arbati-worker
+  #   restart: unless-stopped
+  #   environment:
+  #     - NODE_ENV=production
+  #     - DATABASE_URL=postgresql://${POSTGRES_USER:-arbati}:${POSTGRES_PASSWORD:-arbati_password}@db:5432/${POSTGRES_DB:-arbati}?schema=public
+  #   depends_on:
+  #     - db
+  #   networks:
+  #     - arbati-network
+  #   command: node worker.js
+
+networks:
+  arbati-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+
