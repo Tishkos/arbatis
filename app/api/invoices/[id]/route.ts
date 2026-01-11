@@ -545,32 +545,31 @@ export async function PUT(
           const total = Number(body.total || 0)
           const isPaid = Math.abs(amountPaid - total) < 0.01 || amountPaid >= total
 
-          // CRITICAL: Always update debt based on amountDue (what customer still owes)
+          // CRITICAL: Always update debt based on amountDue (can be positive or negative)
           // We already reversed the original debt above, so now we add the new debt
-          // This handles partial payments correctly:
+          // This handles all payment scenarios correctly:
           // - If amountDue > 0: Customer still owes money, add to debt
-          // - If amountDue = 0 (fully paid): No debt to add
+          // - If amountDue < 0: Customer overpaid (credit), reduce debt
+          // - If amountDue = 0 (fully paid): No change to debt
           // Products (IQD): Update debtIqd AND currentBalance
           // Motorcycles (USD): Update debtUsd (debtUsd serves as USD balance/debt)
-          if (newAmountDue > 0) {
-            // Customer still owes money - add outstanding amount to debt
-            if (newInvoiceCurrency === 'IQD') {
-              // Product invoice - update IQD debt and balance
-              const currentDebtIqd = Number(newCustomer.debtIqd || 0)
-              const currentBalance = Number(newCustomer.currentBalance || 0)
-              updateData.debtIqd = currentDebtIqd + newAmountDue
-              updateData.currentBalance = currentBalance + newAmountDue
-            } else {
-              // USD currency (Motorcycle invoice) - update USD debt
-              // debtUsd serves as both debt and balance for USD transactions
-              const currentDebtUsd = Number(newCustomer.debtUsd || 0)
-              updateData.debtUsd = currentDebtUsd + newAmountDue
-              // Do NOT update currentBalance for USD transactions (it's IQD-specific)
-            }
+          // Always update debt with amountDue (positive adds debt, negative reduces it)
+          if (newInvoiceCurrency === 'IQD') {
+            // Product invoice - update IQD debt and balance
+            const currentDebtIqd = Number(newCustomer.debtIqd || 0)
+            const currentBalance = Number(newCustomer.currentBalance || 0)
+            updateData.debtIqd = currentDebtIqd + newAmountDue
+            updateData.currentBalance = currentBalance + newAmountDue // Positive = owes, Negative = credit
+          } else {
+            // USD currency (Motorcycle invoice) - update USD debt
+            // debtUsd serves as both debt and balance for USD transactions
+            const currentDebtUsd = Number(newCustomer.debtUsd || 0)
+            updateData.debtUsd = currentDebtUsd + newAmountDue
+            // Do NOT update currentBalance for USD transactions (it's IQD-specific)
           }
           
-          // Update payment date if fully paid
-          if (isPaid) {
+          // Update payment date if fully paid or overpaid
+          if (isPaid || newAmountDue <= 0) {
             updateData.lastPaymentDate = new Date()
           }
 

@@ -150,21 +150,23 @@ export class SaleService {
           // Prepare update data
           const updateData: any = {};
           
-          // CRITICAL: For wholesale invoices, always update debt based on amountDue
-          // amountDue = total - amountPaid (what customer still owes)
+          // CRITICAL: Always update debt based on amountDue (can be positive or negative)
+          // amountDue = total - amountPaid
+          // - If amountDue > 0: Customer still owes money (add to debt)
+          // - If amountDue < 0: Customer overpaid (credit/overpayment, reduce debt)
+          // - If amountDue = 0: Fully paid (no change to debt)
           // Products (IQD): Update debtIqd AND currentBalance
           // Motorcycles (USD): Update debtUsd (debtUsd serves as USD balance/debt)
           if (currency === 'IQD') {
             // Product invoice - update IQD debt and balance
-            if (amountDue > 0) {
-              // Add outstanding amount to debt
-              const newDebtIqd = currentDebtIqd + amountDue;
-              const newBalance = currentBalance + amountDue; // Positive balance = owes money
-              updateData.debtIqd = newDebtIqd;
-              updateData.currentBalance = newBalance;
-            }
-            // Update payment date if paid
-            if (invoiceStatus === 'PAID') {
+            // Always update debt with amountDue (positive adds debt, negative reduces it)
+            const newDebtIqd = currentDebtIqd + amountDue;
+            const newBalance = currentBalance + amountDue; // Positive = owes, Negative = credit
+            updateData.debtIqd = newDebtIqd;
+            updateData.currentBalance = newBalance;
+            
+            // Update payment date if fully paid or overpaid
+            if (invoiceStatus === 'PAID' || amountDue <= 0) {
               updateData.lastPaymentDate = new Date();
             } else {
               updateData.lastPaymentDate = customer.lastPaymentDate;
@@ -172,13 +174,12 @@ export class SaleService {
           } else {
             // USD currency (Motorcycle invoice) - update USD debt
             // debtUsd serves as both debt and balance for USD transactions
-            if (amountDue > 0) {
-              // Add outstanding amount to USD debt
-              const newDebtUsd = currentDebtUsd + amountDue;
-              updateData.debtUsd = newDebtUsd;
-            }
-            // Update payment date if paid
-            if (invoiceStatus === 'PAID') {
+            // Always update debt with amountDue (positive adds debt, negative reduces it)
+            const newDebtUsd = currentDebtUsd + amountDue;
+            updateData.debtUsd = newDebtUsd;
+            
+            // Update payment date if fully paid or overpaid
+            if (invoiceStatus === 'PAID' || amountDue <= 0) {
               updateData.lastPaymentDate = new Date();
             } else {
               updateData.lastPaymentDate = customer.lastPaymentDate;
