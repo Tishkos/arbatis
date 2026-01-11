@@ -53,7 +53,11 @@ export function LoginForm({ className, ...props }: LoginFormProps) {
     if (!emailValue || !emailValue.trim()) {
       return false;
     }
-    if (!emailValue.endsWith('@arb-groups.com')) {
+    // Allow @arb-groups.com emails or specific admin email
+    const isArbGroupsEmail = emailValue.endsWith('@arb-groups.com');
+    const isAdminEmail = emailValue === 'hamajamalsabr@gmail.com';
+    
+    if (!isArbGroupsEmail && !isAdminEmail) {
       return false;
     }
     return true;

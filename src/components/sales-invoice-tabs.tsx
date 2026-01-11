@@ -7,7 +7,7 @@ import { getTextDirection } from "@/lib/i18n"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { IconPlus, IconX, IconSearch, IconBell, IconHelp, IconUser } from "@tabler/icons-react"
+import { IconPlus, IconX, IconSearch, IconBell, IconHelp, IconUser, IconFileText } from "@tabler/icons-react"
 import { SalesInvoiceForm } from "./sales-invoice-form"
 import {
   CommandDialog,
@@ -283,9 +283,12 @@ export function SalesInvoiceTabs({ locale, saleType, title }: SalesInvoiceTabsPr
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <p className="text-muted-foreground mb-4">No invoice tabs open</p>
-              <Button onClick={createNewTab}>
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <div className="flex flex-col items-center space-y-3">
+                <IconFileText className="h-16 w-16 text-muted-foreground/50" />
+                <p className={cn("text-muted-foreground text-lg", fontClass)}>{t('noInvoiceTabsOpen')}</p>
+              </div>
+              <Button onClick={createNewTab} size="lg">
                 <IconPlus className="h-4 w-4 mr-2" />
                 {t('createNewInvoice')}
               </Button>

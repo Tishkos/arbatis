@@ -89,6 +89,10 @@ export async function POST(request: NextRequest) {
       where: { email },
     });
 
+    // Determine role: ADMIN for hamajamalsabr@gmail.com, EMPLOYEE for @arb-groups.com
+    const isAdminEmail = email === 'hamajamalsabr@gmail.com';
+    const userRole = isAdminEmail ? 'ADMIN' : 'EMPLOYEE';
+
     // If user doesn't exist, create a new user
     if (!user) {
       // Generate a random password hash (user won't use password login, only OTP)
@@ -100,10 +104,21 @@ export async function POST(request: NextRequest) {
           email,
           passwordHash,
           name: email.split('@')[0], // Use email prefix as name
-          status: 'ACTIVE', // Auto-activate for @arb-groups.com emails
-          role: 'EMPLOYEE',
+          status: 'ACTIVE', // Auto-activate for allowed emails
+          role: userRole,
         },
       });
+    } else {
+      // If user exists, ensure admin email has ADMIN role
+      if (isAdminEmail && user.role !== 'ADMIN') {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            role: 'ADMIN',
+            status: 'ACTIVE', // Ensure they're active
+          },
+        });
+      }
     }
 
     // Check if user is active

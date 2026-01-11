@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const name = formData.get('name') as string
     const sku = formData.get('sku') as string
-    const type = (formData.get('type') as string) || 'INDIVIDUAL'
+    const type = 'INDIVIDUAL' // Always INDIVIDUAL - type selection removed
     const phone = formData.get('phone') as string | null
     const email = formData.get('email') as string | null
     const addressId = formData.get('addressId') as string | null
@@ -203,16 +203,43 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    if (!sku || !sku.trim()) {
+    
+    // Generate SKU if not provided, or check uniqueness if provided
+    let finalSku = sku?.trim() || ''
+    
+    if (!finalSku) {
+      // Generate random 6-character alphanumeric code
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      let generated = ''
+      
+      // Ensure uniqueness - try up to 10 times
+      for (let attempt = 0; attempt < 10; attempt++) {
+        generated = ''
+        for (let i = 0; i < 6; i++) {
+          generated += chars.charAt(Math.floor(Math.random() * chars.length))
+        }
+        
+        const exists = await prisma.customer.findUnique({
+          where: { sku: generated },
+        })
+        
+        if (!exists) {
+          finalSku = generated
+          break
+        }
+      }
+      
+      // If still no unique SKU after 10 attempts, return error
+      if (!finalSku) {
       return NextResponse.json(
-        { error: 'Code (SKU) is required' },
-        { status: 400 }
+          { error: 'Failed to generate unique SKU. Please try again.' },
+          { status: 500 }
       )
     }
-
-    // Check if SKU already exists
+    } else {
+      // Check if user-provided SKU already exists
     const existingCustomer = await prisma.customer.findUnique({
-      where: { sku: sku.trim() },
+        where: { sku: finalSku },
     })
 
     if (existingCustomer) {
@@ -220,6 +247,7 @@ export async function POST(request: NextRequest) {
         { error: 'This Code (SKU) is already in use by another customer. Please choose a different code.' },
         { status: 400 }
       )
+      }
     }
 
     // Get current user
@@ -275,8 +303,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Generate filename based on SKU (sanitized)
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -339,8 +366,7 @@ export async function POST(request: NextRequest) {
         await mkdir(attachmentsDir, { recursive: true })
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -377,7 +403,7 @@ export async function POST(request: NextRequest) {
     const customer = await prisma.customer.create({
       data: {
         name: name.trim(),
-        sku: sku.trim(),
+        sku: finalSku,
         type: type as 'INDIVIDUAL' | 'COMPANY',
         phone: phone?.trim() || null,
         email: email?.trim() || null,

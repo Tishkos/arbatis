@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { getTextDirection } from '@/lib/i18n'
-import { IconCamera, IconX, IconPaperclip } from '@tabler/icons-react'
+import { IconCamera, IconX, IconPaperclip, IconRefresh } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -30,7 +30,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/utils'
+import { cn, generateSkuCode } from '@/lib/utils'
 import { Plus, Edit } from 'lucide-react'
 
 type Customer = {
@@ -71,7 +71,7 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
   
   const [name, setName] = useState('')
   const [sku, setSku] = useState('')
-  const [customerType, setCustomerType] = useState<'INDIVIDUAL' | 'COMPANY'>('INDIVIDUAL')
+  // Customer type is always INDIVIDUAL - removed type selection
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [addressId, setAddressId] = useState<string>('')
@@ -103,7 +103,7 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
     if (customer && open) {
       setName(customer.name || '')
       setSku(customer.sku || '')
-      setCustomerType((customer as any).type || 'INDIVIDUAL')
+      // Type is always INDIVIDUAL
       setPhone(customer.phone || '')
       setEmail(customer.email || '')
       setAddressId(customer.addressId || '')
@@ -148,7 +148,7 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
       }
     } else if (!customer && open) {
       setName('')
-      setSku('')
+      setSku(generateSkuCode()) // Auto-generate SKU for new customers
       setPhone('')
       setEmail('')
       setAddressId('')
@@ -250,7 +250,7 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
       const formData = new FormData()
       formData.append('name', name.trim())
       formData.append('sku', sku.trim())
-      formData.append('type', customerType)
+      formData.append('type', 'INDIVIDUAL') // Always INDIVIDUAL
       if (phone) formData.append('phone', phone.trim())
       if (email) formData.append('email', email.trim())
       if (addressId && !showNewAddress) {
@@ -437,6 +437,7 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
                     <Label htmlFor="sku" className={cn(fontClass, "flex items-center gap-1")}>
                       {t('dialog.code')} <span className="text-destructive">*</span>
                     </Label>
+                    <div className="flex gap-2">
                     <Input
                       id="sku"
                       value={sku}
@@ -444,20 +445,19 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
                       placeholder={t('dialog.codePlaceholder')}
                       className={fontClass}
                     />
+                      {!isEditMode && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setSku(generateSkuCode())}
+                          title="Generate new code"
+                          className="flex-shrink-0"
+                        >
+                          <IconRefresh className="h-4 w-4" />
+                        </Button>
+                      )}
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="customerType" className={cn(fontClass, "flex items-center gap-1")}>
-                      {t('dialog.type')} <span className="text-destructive">*</span>
-                    </Label>
-                    <Select value={customerType} onValueChange={(value: 'INDIVIDUAL' | 'COMPANY') => setCustomerType(value)}>
-                      <SelectTrigger className={fontClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="INDIVIDUAL">{t('dialog.individual')}</SelectItem>
-                        <SelectItem value="COMPANY">{t('dialog.company')}</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
 

@@ -82,3 +82,16 @@ export function hasPermission(
          userPermissions.includes('*'); // Wildcard for full access
 }
 
+/**
+ * Generate random 6-character alphanumeric SKU code
+ * Uses uppercase letters and numbers (A-Z, 0-9)
+ */
+export function generateSkuCode(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+

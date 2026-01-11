@@ -21,24 +21,28 @@ type SalesOption = {
 const SalesIcon = ({ isWholesale, isMotorcycle }: { isWholesale: boolean; isMotorcycle: boolean }) => {
   if (isMotorcycle) {
     if (isWholesale) {
+      // Two separate motorcycle icons for wholesale
       return (
-        <div className="relative flex items-center justify-center w-7 h-7">
-          <IconMotorbike className="h-6 w-6 text-primary absolute bottom-2 right-2" />
-          <IconMotorbike className="h-6 w-6 text-primary opacity-50 absolute top-2 left-2" />
+        <div className="flex items-center justify-center gap-1">
+          <IconMotorbike className="h-6 w-6 text-primary" />
+          <IconMotorbike className="h-6 w-6 text-primary" />
         </div>
       )
     } else {
+      // One motorcycle icon for retail
       return <IconMotorbike className="h-6 w-6 text-primary" />
     }
   } else {
     if (isWholesale) {
+      // Two separate product icons for wholesale
       return (
-        <div className="relative flex items-center justify-center w-7 h-7">
-          <IconPackage className="h-6 w-6 text-primary absolute bottom-2 right-2" />
-          <IconPackage className="h-6 w-6 text-primary opacity-50 absolute top-2 left-2" />
+        <div className="flex items-center justify-center gap-1">
+          <IconPackage className="h-6 w-6 text-primary" />
+          <IconPackage className="h-6 w-6 text-primary" />
         </div>
       )
     } else {
+      // One product icon for retail
       return <IconPackage className="h-6 w-6 text-primary" />
     }
   }
@@ -81,14 +85,14 @@ export function SalesPage({ locale }: { locale: string }) {
       {/* Sales Applications */}
       <div className={cn("grid grid-cols-1 gap-6 sm:grid-cols-2 px-4 lg:px-6", fontClass)}>
         {salesOptions.map((option) => {
-          const isWholesale = option.title.toLowerCase().includes('wholesale')
-          const isMotorcycle = option.title.toLowerCase().includes('motorcycle')
+          const isWholesale = option.url.includes('wholesale')
+          const isMotorcycle = option.url.includes('motorcycle')
           return (
             <Link key={option.url} href={option.url}>
               <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
                 <CardHeader>
                   <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <div className={cn("flex items-center justify-center rounded-lg bg-primary/10", isWholesale ? "h-10 w-16" : "h-10 w-10")}>
                       <SalesIcon isWholesale={isWholesale} isMotorcycle={isMotorcycle} />
                     </div>
                     <div className="flex-1">

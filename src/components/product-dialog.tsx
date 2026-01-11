@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { getTextDirection } from '@/lib/i18n'
-import { IconCamera, IconPaperclip, IconX, IconAlertTriangle } from '@tabler/icons-react'
+import { IconCamera, IconPaperclip, IconX, IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -31,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { cn, generateSkuCode } from '@/lib/utils'
 import { Plus, Edit } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 type Product = {
@@ -62,7 +62,9 @@ interface ProductDialogProps {
 }
 
 export function ProductDialog({ open, onOpenChange, onSuccess, categories, product }: ProductDialogProps) {
-  const isEditMode = !!product
+  // Only treat as edit mode if product has a valid ID
+  // Empty ID means it's a new product with pre-filled data (e.g., from sales page)
+  const isEditMode = !!(product && product.id && product.id.trim() !== '')
   const params = useParams()
   const locale = (params?.locale as string) || 'ku'
   const t = useTranslations('products')
@@ -92,10 +94,18 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
   useEffect(() => {
     if (product && open) {
       setName(product.name || '')
-      setSku(product.sku || '')
+      // Auto-generate SKU if empty (for new products from sales page)
+      setSku(product.sku && product.sku.trim() ? product.sku : generateSkuCode())
       setCategoryId(product.categoryId || '')
-      setMufradPrice(String(product.mufradPrice || ''))
-      setJumlaPrice(String(product.jumlaPrice || ''))
+      // Only pre-fill prices if product has a valid ID (edit mode)
+      // If empty ID (new product from sales page), leave prices empty for user to enter
+      if (product.id && product.id.trim() !== '') {
+        setMufradPrice(String(product.mufradPrice || ''))
+        setJumlaPrice(String(product.jumlaPrice || ''))
+      } else {
+        setMufradPrice('')
+        setJumlaPrice('')
+      }
       setRmbPrice(product.rmbPrice ? String(product.rmbPrice) : '')
       setQuantity(String(product.stockQuantity || '0'))
       setLowStockThreshold(String(product.lowStockThreshold || '10'))
@@ -134,7 +144,7 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
       }
     } else if (!product && open) {
       setName('')
-      setSku('')
+      setSku(generateSkuCode()) // Auto-generate SKU for new products
       setCategoryId('')
       setNewCategoryName('')
       setShowNewCategory(false)
@@ -297,7 +307,19 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
         body: formData,
       })
 
-      const data = await response.json()
+      // Check if response has content before parsing JSON
+      const contentType = response.headers.get('content-type')
+      const text = await response.text()
+      let data: any = {}
+      
+      if (contentType && contentType.includes('application/json') && text.trim()) {
+        try {
+          data = JSON.parse(text)
+        } catch (e) {
+          console.error('Failed to parse JSON response:', e, text)
+          throw new Error(isEditMode ? t('dialog.updateFailed') : t('dialog.creationFailed'))
+        }
+      }
 
       if (!response.ok) {
         const errorMsg = data.error || (isEditMode ? t('dialog.updateFailed') : t('dialog.creationFailed'))
@@ -465,6 +487,7 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
                     <Label htmlFor="sku" className={cn(fontClass, "flex items-center gap-1")}>
                       {locale === "ku" ? "کۆد" : locale === "ar" ? "الكود" : t('dialog.sku')} <span className="text-destructive">*</span>
                     </Label>
+                    <div className="flex gap-2">
                     <Input
                       id="sku"
                       value={sku}
@@ -472,6 +495,19 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
                       placeholder={t('dialog.skuPlaceholder')}
                       className={fontClass}
                     />
+                      {!isEditMode && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setSku(generateSkuCode())}
+                          title="Generate new code"
+                          className="flex-shrink-0"
+                        >
+                          <IconRefresh className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
 

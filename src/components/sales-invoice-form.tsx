@@ -328,7 +328,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   }, [draftId])
 
   // Generate series when customer name is available
+  // BUT: Don't auto-generate when editing an invoice - preserve the original invoice number
   React.useEffect(() => {
+    // Skip auto-generation if we're editing an invoice
+    if (invoiceId) {
+      return
+    }
+    
     const nameToUse = selectedCustomer?.name || customerName
     if (nameToUse) {
       const newSeries = generateSeries(nameToUse)
@@ -336,7 +342,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     } else {
       setNamingSeries("")
     }
-  }, [selectedCustomer, customerName])
+  }, [selectedCustomer, customerName, invoiceId])
 
   // Save form state to localStorage whenever it changes
   const saveFormState = React.useCallback(() => {
@@ -581,14 +587,25 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           
           if (itemsToProcess && itemsToProcess.length > 0) {
             console.log('Processing invoice items:', itemsToProcess.length, 'from', invoice.items?.length ? 'invoice.items' : 'sale.items')
+            console.log('Items to process:', itemsToProcess.map((item: any, idx: number) => ({
+              index: idx,
+              productId: item.productId,
+              hasProduct: !!item.product,
+              productName: item.product?.name,
+              notes: item.notes
+            })))
             const invoiceItems: InvoiceItem[] = await Promise.all(
               itemsToProcess.map(async (item: any, index: number) => {
                 // Check if it's a motorcycle item (notes contain MOTORCYCLE:)
                 // Handle both uppercase and lowercase
                 const itemNotes = item.notes || ''
                 const isMotorcycleItem = itemNotes.toUpperCase().trim().startsWith('MOTORCYCLE:')
-                let itemName = item.product?.name || 'Unknown Item'
-                let itemId = item.productId || null
+                
+                // CRITICAL: Always preserve productId as itemId - this ensures items can be saved even if product is missing
+                // Note: sale.items don't have productId field, only product relation, so use product?.id as fallback
+                const originalProductId = item.productId || item.product?.id || null
+                let itemName = item.product?.name || null
+                let itemId = originalProductId // Always start with productId (or product.id if productId is missing)
                 let stockQuantity = item.product?.stockQuantity || undefined
                 const originalQuantitySold = item.quantity || 0
                 
@@ -596,7 +613,8 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                   productId: item.productId,
                   notes: item.notes,
                   isMotorcycle: isMotorcycleItem,
-                  product: item.product?.name
+                  product: item.product,
+                  hasProductRelation: !!item.product
                 })
                 
                 // If it's a motorcycle, fetch motorcycle details
@@ -616,21 +634,130 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                         }
                       } else {
                         console.warn('Failed to fetch motorcycle:', motorcycleId, motoResponse.statusText)
+                        // Use motorcycle ID as fallback name if fetch fails
+                        itemName = itemName || `Motorcycle ${motorcycleId.slice(0, 8)}`
                       }
                     } catch (error) {
                       console.error('Error fetching motorcycle:', error)
+                      // Use motorcycle ID as fallback name if fetch fails
+                      itemName = itemName || `Motorcycle ${motorcycleId.slice(0, 8)}`
                     }
                   }
-                } else if (item.product) {
-                  // For products: restore sold quantity to available stock for editing
-                  // Current stock + quantity originally sold in this invoice
-                  stockQuantity = (item.product.stockQuantity || 0) + originalQuantitySold
+                } else if (item.productId) {
+                  // CRITICAL: If we have productId, ALWAYS preserve it as itemId
+                  // This ensures items can be saved even if product relation is missing
+                  itemId = item.productId
+                  
+                  if (item.product) {
+                    // Product relation exists - use product data
+                    itemName = item.product.name
+                    stockQuantity = (item.product.stockQuantity || 0) + originalQuantitySold
+                  } else {
+                    // Product relation is missing but productId exists - try to fetch product
+                    // This handles cases where product was deleted or relation wasn't loaded
+                    try {
+                      const productResponse = await fetch(`/api/products/${item.productId}`)
+                      if (productResponse.ok) {
+                        const productData = await productResponse.json()
+                        if (productData.product) {
+                          itemName = productData.product.name
+                          stockQuantity = (productData.product.stockQuantity || 0) + originalQuantitySold
+                        } else {
+                          // Product not found - use productId as fallback
+                          // itemId is already set above, so we just need to set the name
+                          itemName = `Product ${item.productId.slice(0, 8)}`
+                          console.warn(`Product ${item.productId} not found in database - preserving itemId for save`)
+                        }
+                      } else {
+                        // Product fetch failed - use productId as fallback
+                        // itemId is already set above, so we just need to set the name
+                        itemName = `Product ${item.productId.slice(0, 8)}`
+                        console.warn(`Failed to fetch product ${item.productId}:`, productResponse.statusText, '- preserving itemId for save')
+                      }
+                    } catch (error) {
+                      console.error('Error fetching product by ID:', error)
+                      // If product fetch fails, use productId as fallback name
+                      // itemId is already set above, so we just need to set the name
+                      itemName = itemName || `Product ${item.productId.slice(0, 8)}`
+                      console.warn('Product fetch error - preserving itemId for save:', item.productId)
+                    }
+                  }
+                }
+                
+                // Final fallback - if we still don't have a name, use a generic one
+                // CRITICAL: Ensure itemId is ALWAYS preserved from productId
+                // Since we set itemId = item.productId at the start of the else if block,
+                // itemId should already be set. But add safety checks just in case.
+                if (!itemId && originalProductId) {
+                  itemId = originalProductId
+                  console.warn(`Item ${index}: itemId was null but productId exists - preserving productId:`, originalProductId)
+                }
+                
+                // CRITICAL: Final safety check - ensure itemId is ALWAYS set if we have productId
+                if (!itemId && item.productId) {
+                  itemId = item.productId
+                  console.warn(`Item ${index}: Final fallback - using productId as itemId:`, item.productId)
+                }
+                
+                if (!itemName) {
+                  if (originalProductId) {
+                    // Try one more time to get product name by fetching from API
+                    // This is a final attempt before giving up
+                    try {
+                      const productResponse = await fetch(`/api/products/${originalProductId}`)
+                      if (productResponse.ok) {
+                        const productData = await productResponse.json()
+                        if (productData.product?.name) {
+                          itemName = productData.product.name
+                          stockQuantity = (productData.product.stockQuantity || 0) + originalQuantitySold
+                        } else {
+                          // Product exists but no name - use productId-based fallback
+                          itemName = `Product ${originalProductId.slice(0, 8)}`
+                        }
+                      } else {
+                        // Product fetch failed - use productId-based fallback
+                        itemName = `Product ${originalProductId.slice(0, 8)}`
+                      }
+                    } catch (error) {
+                      // Fetch error - use productId-based fallback
+                      itemName = `Product ${originalProductId.slice(0, 8)}`
+                    }
+                  } else {
+                    // No productId at all - this shouldn't happen for products, but handle it
+                    itemName = 'Unknown Item'
+                  }
+                }
+                
+                // FINAL ABSOLUTE CHECK: Ensure itemId is ALWAYS set if we have productId
+                // This is the absolute last line of defense to prevent losing items
+                if (!isMotorcycleItem && !itemId && originalProductId) {
+                  itemId = originalProductId
+                  console.error(`CRITICAL FALLBACK: Item ${index} still has no itemId - using originalProductId:`, originalProductId)
+                }
+                
+                // Final safety check: if we still don't have itemId but we have originalProductId, use it
+                // This ensures items are NEVER lost, even if all other logic fails
+                if (!itemId && originalProductId) {
+                  itemId = originalProductId
+                  console.warn(`FINAL FALLBACK: Item ${index} using originalProductId as itemId:`, originalProductId)
+                }
+                
+                // If we still don't have itemId for a product item, log a warning (not an error)
+                // The item will still be saved, just without productId
+                if (!isMotorcycleItem && !itemId) {
+                  console.warn(`WARNING: Item ${index} (${itemName}) has no itemId and no productId - will save without productId`, {
+                    item,
+                    itemName,
+                    originalProductId,
+                    hasProduct: !!item.product,
+                    productId: item.productId
+                  })
                 }
                 
                 return {
                   id: `item-${item.id || Date.now()}-${index}`,
-                  itemId: itemId,
-                  itemName: itemName,
+                  itemId: itemId || null, // Ensure it's never undefined
+                  itemName: itemName || 'Unknown Item',
                   itemType: isMotorcycleItem ? 'motorcycle' : 'product',
                   quantity: originalQuantitySold,
                   rate: Number(item.unitPrice) || 0,
@@ -642,6 +769,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               })
             )
             console.log('Loaded invoice items:', invoiceItems.length)
+            console.log('Loaded invoice items with itemIds:', invoiceItems.map((item, idx) => ({
+              index: idx,
+              itemName: item.itemName,
+              itemId: item.itemId,
+              itemType: item.itemType,
+              hasItemId: !!item.itemId
+            })))
             setItems(invoiceItems)
           } else {
             console.warn('Invoice has no items or items array is empty')
@@ -682,9 +816,15 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           console.log('Restoring form state for tab:', tabId, 'Items:', formState.items?.length || 0)
           
           // Restore all form fields - restore even if empty arrays
+          // BUT: When editing an invoice, don't restore namingSeries from localStorage
+          // The invoice number should come from the invoice, not localStorage
           if (formState.draftId !== undefined) setDraftId(formState.draftId)
           if (formState.draftStatus !== undefined) setDraftStatus(formState.draftStatus)
-          if (formState.namingSeries !== undefined) setNamingSeries(formState.namingSeries)
+          // Only restore namingSeries if NOT editing an invoice
+          // When editing, namingSeries is set from invoice.invoiceNumber in loadInvoice
+          if (!invoiceId && formState.namingSeries !== undefined) {
+            setNamingSeries(formState.namingSeries)
+          }
           if (formState.customerId !== undefined) setCustomerId(formState.customerId)
           if (formState.customerName !== undefined) setCustomerName(formState.customerName)
           if (formState.selectedCustomer !== undefined) setSelectedCustomer(formState.selectedCustomer)
@@ -1364,6 +1504,34 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           newStatus = 'PARTIALLY_PAID'
         }
         
+        // Validate and prepare items for saving
+        // We save items even if itemId is missing - the API will handle it
+        const itemsWithValidation = items.map((item, index) => {
+          if (item.itemType === 'product' && !item.itemId) {
+            console.warn(`Item ${index} (${item.itemName}) is missing itemId! Saving without productId.`, item)
+          }
+          if (item.itemType === 'motorcycle' && !item.itemId) {
+            console.warn(`Item ${index} (${item.itemName}) is missing itemId! Saving without ID.`, item)
+          }
+          return {
+            productId: item.itemType === 'product' ? (item.itemId || null) : null,
+            quantity: item.quantity,
+            unitPrice: item.rate,
+            discount: 0,
+            taxRate: 0,
+            lineTotal: item.amount,
+            notes: item.itemType === 'motorcycle' ? (item.itemId ? `MOTORCYCLE:${item.itemId}` : undefined) : undefined,
+            order: index,
+          }
+        })
+        
+        console.log('Saving invoice with items:', itemsWithValidation.map((item, idx) => ({
+          index: idx,
+          productId: item.productId,
+          name: items[idx].itemName,
+          itemId: items[idx].itemId
+        })))
+        
         const invoiceData = {
           customerId: customerId || null,
           invoiceDate: date ? new Date(date).toISOString() : new Date().toISOString(),
@@ -1376,16 +1544,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           amountDue: newAmountDue,
           currency: invoiceCurrency,
           status: newStatus,
-          items: items.map((item, index) => ({
-            productId: item.itemType === 'product' ? item.itemId : null,
-            quantity: item.quantity,
-            unitPrice: item.rate,
-            discount: 0,
-            taxRate: 0,
-            lineTotal: item.amount,
-            notes: item.itemType === 'motorcycle' ? `MOTORCYCLE:${item.itemId}` : undefined,
-            order: index,
-          })),
+          items: itemsWithValidation,
         }
         
         const response = await fetch(`/api/invoices/${invoiceId}`, {
@@ -1405,8 +1564,8 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           setAlertDialog({
             open: true,
             type: 'success',
-            title: 'Invoice Updated',
-            message: 'Invoice has been successfully updated.',
+            title: t('invoiceUpdated'),
+            message: t('invoiceUpdatedSuccessfully'),
           })
         }
       } else {
@@ -1664,7 +1823,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         // Show success toast
         toast({
           title: t('invoiceSubmitted'),
-          description: `Invoice "${result.invoiceNumber || namingSeries || 'N/A'}" has been submitted successfully.`,
+          description: (
+            <div className="flex items-center gap-2">
+              <IconCircleCheck className="h-4 w-4 text-green-600 flex-shrink-0" />
+              <span>{t('invoiceSubmittedSuccessfully', { invoiceNumber: result.invoiceNumber || namingSeries || 'N/A' })}</span>
+            </div>
+          ),
+          className: 'border-green-200 bg-green-50 dark:bg-green-950/20',
         })
         
         // Show success dialog with invoice details
@@ -2022,7 +2187,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                   checked={isReturn}
                   onCheckedChange={handleIsReturnChange}
                 />
-                <Label htmlFor="is-return" className="text-sm">Is Return (Credit Note)</Label>
+                <Label htmlFor="is-return" className={cn("text-sm", fontClass)}>{t('isReturnCreditNote')}</Label>
               </div>
 
               {/* Items Section */}
@@ -2188,7 +2353,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                   "text-xs ml-2",
                                                   product.stockQuantity > 0 ? "text-muted-foreground" : "text-destructive font-medium"
                                                 )}>
-                                                  Stock: {product.stockQuantity}
+                                                  {t('stock')}: {product.stockQuantity}
                                                 </span>
                                               </div>
                                             </div>
@@ -2268,7 +2433,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                   "text-xs ml-2",
                                                   motorcycle.stockQuantity > 0 ? "text-muted-foreground" : "text-destructive font-medium"
                                                 )}>
-                                                  Stock: {motorcycle.stockQuantity}
+                                                  {t('stock')}: {motorcycle.stockQuantity}
                                                 </span>
                                               </div>
                                             </div>
@@ -2384,10 +2549,10 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                 {items.length > 0 && (
                   <div className="flex justify-between items-center bg-muted/30 rounded-lg px-4 py-3 border">
                     <div className="flex items-center gap-4">
-                      <span className="text-sm font-medium">Total Quantity: <span className="font-semibold">{totalQty}</span></span>
+                      <span className={cn("text-sm font-medium", fontClass)}>{t('totalQuantity')}: <span className="font-semibold">{totalQty}</span></span>
                     </div>
                     <div className="text-right">
-                      <span className="text-sm text-muted-foreground">Subtotal ({getCurrencyLabel()}): </span>
+                      <span className={cn("text-sm text-muted-foreground", fontClass)}>{t('subtotal')} ({getCurrencyLabel()}): </span>
                       <span className="text-lg font-bold">{getCurrencySymbol()}{formatCurrency(total)}</span>
                     </div>
                   </div>
@@ -2398,32 +2563,32 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               {items.length > 0 && (
                 <div className="space-y-4 border-t pt-6">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold">Discount</h3>
+                    <h3 className={cn("text-lg font-semibold", fontClass)}>{t('discount')}</h3>
                     <div className="flex items-center space-x-2">
                     <Switch
                       checked={discountEnabled}
                       onCheckedChange={handleDiscountEnabledChange}
                     />
-                      <Label>Apply Discount</Label>
+                      <Label className={fontClass}>{t('applyDiscount')}</Label>
                     </div>
                   </div>
                   
                   {discountEnabled && (
                     <div className="grid grid-cols-2 gap-4 bg-muted/30 rounded-lg p-4 border">
                       <div className="space-y-2">
-                        <Label>Discount Type</Label>
+                        <Label className={fontClass}>{t('discountType')}</Label>
                         <Select value={discountType} onValueChange={(value: 'percentage' | 'value') => setDiscountType(value)}>
-                          <SelectTrigger>
+                          <SelectTrigger className={fontClass}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="percentage">Percentage (%)</SelectItem>
-                            <SelectItem value="value">Fixed Amount ({getCurrencyLabel()})</SelectItem>
+                            <SelectItem value="percentage" className={fontClass}>{t('percentage')}</SelectItem>
+                            <SelectItem value="value" className={fontClass}>{t('fixedAmount')} ({getCurrencyLabel()})</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label>Discount Amount</Label>
+                        <Label className={fontClass}>{t('discountAmount')}</Label>
                         <Input
                           type="number"
                           min="0"
@@ -2431,13 +2596,14 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                           max={discountType === 'percentage' ? '100' : undefined}
                           value={discountAmount}
                           onChange={(e) => setDiscountAmount(parseFloat(e.target.value) || 0)}
-                          placeholder={discountType === 'percentage' ? 'Enter percentage' : 'Enter amount'}
+                          placeholder={discountType === 'percentage' ? t('enterPercentage') : t('enterAmount')}
+                          className={fontClass}
                         />
                       </div>
                       {discountEnabled && discountAmount > 0 && (
                         <div className="col-span-2 pt-2 border-t">
                           <div className="flex justify-between items-center">
-                            <span className="text-sm text-muted-foreground">Discount Value:</span>
+                            <span className={cn("text-sm text-muted-foreground", fontClass)}>{t('discountValue')}:</span>
                             <span className="text-lg font-semibold text-primary">
                               {getCurrencySymbol()}{formatCurrency(discountValue)}
                             </span>
@@ -2585,12 +2751,12 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                   <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-xl p-6 border-2 border-green-200 dark:border-green-800 shadow-sm">
                     <div className="flex justify-between items-center">
                       <div>
-                        <Label className="text-sm font-medium text-muted-foreground mb-1 block">Payment Method</Label>
-                        <div className="text-xl font-bold text-green-700 dark:text-green-400">Direct Payment (Pay Now)</div>
+                        <Label className={cn("text-sm font-medium text-muted-foreground mb-1 block", fontClass)}>{t('paymentMethod')}</Label>
+                        <div className={cn("text-xl font-bold text-green-700 dark:text-green-400", fontClass)}>{t('directPaymentPayNow')}</div>
                       </div>
                       <div className="text-right">
-                        <Label className="text-sm font-medium text-muted-foreground mb-1 block">Grand Total</Label>
-                        <div className="text-3xl font-bold text-green-700 dark:text-green-400">
+                        <Label className={cn("text-sm font-medium text-muted-foreground mb-1 block", fontClass)}>{t('grandTotal')}</Label>
+                        <div className={cn("text-3xl font-bold text-green-700 dark:text-green-400", fontClass)}>
                           {getCurrencySymbol()}{formatCurrency(grandTotal)}
                         </div>
                       </div>
@@ -2614,21 +2780,77 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
             setProductDialogData(null)
           }
         }}
-        onSuccess={() => {
-          // Refresh products
-          fetchProducts()
-          // Update the item to mark it as in database (only if opened from an item)
-          if (productDialogData?.itemId) {
-            setItems(currentItems => currentItems.map(item => {
-              if (item.id === productDialogData.itemId) {
-                return {
-                  ...item,
-                  isProductInDatabase: true,
-                  productNotFound: false,
-                }
+        onSuccess={async () => {
+          // Store the item ID and name before closing dialog
+          const savedItemId = productDialogData?.itemId
+          const savedItemName = productDialogData?.name
+          
+          // Refresh products list
+          await fetchProducts()
+          
+          // Update the item with the newly created product's data (only if opened from an item)
+          if (savedItemId && savedItemName) {
+            try {
+              // Fetch the newly created product by name
+              const response = await fetch(`/api/products?search=${encodeURIComponent(savedItemName)}&pageSize=50`)
+              const data = await response.json()
+              
+              // Find the newly created product by exact name match (should be the first match)
+              const newProduct = data.products?.find((p: Product) => p.name === savedItemName)
+              
+              if (newProduct) {
+                // Determine which price to use (retail for retail, wholesale for wholesale)
+                const price = isRetail ? newProduct.mufradPrice : newProduct.jumlaPrice
+                const priceValue = typeof price === 'number' ? price : parseFloat(String(price)) || 0
+                
+                // Update the item with the new product's data
+                setItems(currentItems => currentItems.map(item => {
+                  if (item.id === savedItemId) {
+                    const updatedItem = {
+                      ...item,
+                      itemId: newProduct.id,
+                      itemName: newProduct.name,
+                      stockQuantity: newProduct.stockQuantity || 0,
+                      isProductInDatabase: true,
+                      productNotFound: false,
+                    }
+                    // Only update rate if it's 0 or not set, preserve user's manual input
+                    if (item.rate === 0 || !item.rate) {
+                      updatedItem.rate = priceValue
+                      // Recalculate amount
+                      updatedItem.amount = updatedItem.quantity * updatedItem.rate
+                    }
+                    return updatedItem
+                  }
+                  return item
+                }))
+              } else {
+                // If product not found in search, just mark as in database
+                setItems(currentItems => currentItems.map(item => {
+                  if (item.id === savedItemId) {
+                    return {
+                      ...item,
+                      isProductInDatabase: true,
+                      productNotFound: false,
+                    }
+                  }
+                  return item
+                }))
               }
-              return item
-            }))
+            } catch (error) {
+              console.error('Error fetching newly created product:', error)
+              // Fallback: just mark as in database
+              setItems(currentItems => currentItems.map(item => {
+                if (item.id === savedItemId) {
+                  return {
+                    ...item,
+                    isProductInDatabase: true,
+                    productNotFound: false,
+                  }
+                }
+                return item
+              }))
+            }
           }
           setProductDialogOpen(false)
           setProductDialogData(null)
@@ -2637,9 +2859,9 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         product={productDialogData ? {
           id: '', // Empty ID = new product
           name: productDialogData.name,
-          sku: '',
-          mufradPrice: productDialogData.price,
-          jumlaPrice: productDialogData.price,
+          sku: '', // Will be auto-generated
+          mufradPrice: '', // Empty - user must enter price
+          jumlaPrice: '', // Empty - user must enter price
           rmbPrice: null,
           stockQuantity: 0,
           lowStockThreshold: 10,

@@ -69,6 +69,7 @@ export function InvoiceSuccessDialog({
   const generateInvoicePDF = async (invoice: any, invoiceNumber: string) => {
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
+    const { format } = await import('date-fns')
 
     const doc = new jsPDF('p', 'mm', 'a4')
     const pageWidth = doc.internal.pageSize.getWidth()
@@ -100,97 +101,100 @@ export function InvoiceSuccessDialog({
     const currencySymbol = isMotorcycle ? '$' : 'ع.د '
     const currencyLabel = isMotorcycle ? 'USD' : 'ع.د'
 
-    // Header with logo
-    try {
-      const logoUrl = '/assets/logo/arbati.png'
-      const response = await fetch(logoUrl)
-      const blob = await response.blob()
-      const imgData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
-      })
-      doc.addImage(imgData, 'PNG', margin, margin, 40, 15)
-    } catch (error) {
-      console.warn('Could not load logo:', error)
-    }
+    // Extract 6-character code from invoice number
+    const invoiceParts = invoiceNumber.split('-')
+    const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoiceNumber.slice(-6)
 
-    startY = margin + 20
+    // Format date as MM/DD/YYYY HH:MM AM/PM
+    const invoiceDate = new Date(invoice.invoiceDate)
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
+    const day = String(invoiceDate.getDate()).padStart(2, '0')
+    const year = invoiceDate.getFullYear()
+    const hours = invoiceDate.getHours()
+    const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    const displayHours = hours % 12 || 12
+    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
 
-    // Invoice Title
-    doc.setFontSize(20)
-    doc.setFont('helvetica', 'bold')
-    doc.text('INVOICE', pageWidth / 2, startY, { align: 'center' })
-    startY += 10
-
-    // Invoice Number
-    doc.setFontSize(14)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Invoice Number: ${invoiceNumber}`, pageWidth / 2, startY, { align: 'center' })
-    startY += 8
-
-    // Date
-    const invoiceDate = invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'PP') : format(new Date(), 'PP')
-    doc.setFontSize(10)
-    doc.text(`Date: ${invoiceDate}`, pageWidth / 2, startY, { align: 'center' })
-    startY += 15
-
-    // Customer and Invoice Details (side by side)
-    const leftX = margin
-    const rightX = pageWidth - margin - 60
-
-    // Customer Details - Show for both database customers and retail customers (from invoice number)
-    // Extract customer name from invoice number for retail invoices (format: customerName-YYYY-MM-DD-RANDOMCODE)
-    let customerName = invoice.customer?.name || null
-    let customerSku = invoice.customer?.sku || null
+    // Get customer name and address
+    let customerName = 'Unknown'
+    let customerAddress = ''
     
-    // If no customer in database, try to extract from invoice number (for retail)
-    if (!customerName && invoiceNumber) {
+    if (invoice.customer) {
+      customerName = invoice.customer.name || 'Unknown'
+      // Try to get address from customer - fetch full customer data if needed
+      try {
+        const customerResponse = await fetch(`/api/customers/${invoice.customer.id}`)
+        if (customerResponse.ok) {
+          const customerData = await customerResponse.json()
+          // Handle address - it can be an object with { id, name } or a string
+          const addr = customerData.address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = customerData.phone || customerData.email || invoice.customer.phone || invoice.customer.email || ''
+          }
+        } else {
+          const addr = (invoice.customer as any).address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = invoice.customer.phone || invoice.customer.email || ''
+          }
+        }
+      } catch (error) {
+        const addr = (invoice.customer as any).address
+        if (addr) {
+          customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+            ? addr.name 
+            : (typeof addr === 'string' ? addr : '')
+        }
+        if (!customerAddress) {
+          customerAddress = invoice.customer.phone || invoice.customer.email || ''
+        }
+      }
+    } else {
+      // Extract customer name from invoice number for retail invoices
       const parts = invoiceNumber.split('-')
-      // Find the first part that looks like a year (4 digits starting with 19 or 20)
       const yearIndex = parts.findIndex(part => /^(19|20)\d{2}$/.test(part))
       if (yearIndex > 0) {
-        // Take all parts before the year
         customerName = parts.slice(0, yearIndex).join('-')
       }
     }
-    
-    // Always show "Bill To:" section
-    doc.setFontSize(12)
+
+    // Header: Customer Name, Address, Date, Invoice Code
+    doc.setFontSize(11)
     doc.setFont('helvetica', 'bold')
-    doc.text('Bill To:', leftX, startY)
-    doc.setFontSize(10)
+    doc.text(`${t('customer') || 'Customer'}:`, margin, startY)
     doc.setFont('helvetica', 'normal')
+    doc.text(customerName, margin + 30, startY)
     startY += 6
-    doc.text(customerName || 'Unknown', leftX, startY)
     
-    if (customerSku) {
-      startY += 5
-      doc.text(`SKU: ${customerSku}`, leftX, startY)
+    if (customerAddress) {
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('address') || 'Address'}:`, margin, startY)
+      doc.setFont('helvetica', 'normal')
+      doc.text(customerAddress, margin + 30, startY)
+      startY += 6
     }
     
-    if (invoice.customer?.phone) {
-      startY += 5
-      doc.text(`Phone: ${invoice.customer.phone}`, leftX, startY)
-    }
-
-    // Invoice Details (right side)
-    let rightY = startY - (invoice.customer ? 20 : 0)
-    doc.setFontSize(12)
     doc.setFont('helvetica', 'bold')
-    doc.text('Invoice Details:', rightX, rightY)
-    doc.setFontSize(10)
+    doc.text(`${t('invoiceDate') || 'Date'}:`, margin, startY)
     doc.setFont('helvetica', 'normal')
-    rightY += 6
-    doc.text(`Status: ${invoice.status}`, rightX, rightY)
-    rightY += 5
-    if (invoice.dueDate) {
-      doc.text(`Due Date: ${format(new Date(invoice.dueDate), 'PP')}`, rightX, rightY)
-      rightY += 5
-    }
-
-    startY = Math.max(startY, rightY) + 15
+    doc.text(formattedDate, margin + 30, startY)
+    startY += 6
+    
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${t('invoiceNumber') || 'Invoice'}:`, margin, startY)
+    doc.setFont('helvetica', 'normal')
+    doc.text(invoiceCode, margin + 30, startY)
+    startY += 15
 
     // Items Table - use invoice.items or fallback to sale.items
     let invoiceItems: any[] = []
@@ -200,168 +204,319 @@ export function InvoiceSuccessDialog({
       invoiceItems = invoice.sale.items
     }
     
-    console.log('Items for PDF table:', {
-      invoiceItemsCount: invoice.items?.length || 0,
-      saleItemsCount: invoice.sale?.items?.length || 0,
-      finalItemsCount: invoiceItems.length,
-      items: invoiceItems
-    })
-    
-    // Fetch motorcycle names if needed
-    const tableData = await Promise.all(invoiceItems.map(async (item: any, index: number) => {
-      // Get item name - check product first, then notes for motorcycle
+    // Fetch item details with images
+    const tableDataWithImages = await Promise.all(invoiceItems.map(async (item: any, index: number) => {
       let itemName = 'N/A'
-      if (item.product?.name) {
-        itemName = item.product.name
-      } else if (item.notes) {
-        // For motorcycles, extract from notes: MOTORCYCLE:id
-        if (item.notes.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
-          const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
-          if (motorcycleId) {
-            try {
-              // Try to fetch motorcycle name
-              const motoResponse = await fetch(`/api/motorcycles/${motorcycleId}`)
-              if (motoResponse.ok) {
-                const motoData = await motoResponse.json()
-                if (motoData.motorcycle) {
-                  itemName = `${motoData.motorcycle.brand} ${motoData.motorcycle.model}`
-                } else {
-                  itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
-                }
+      let itemSku: string | null = null
+      let imageUrl: string | null = null
+      
+      if (item.product) {
+        itemName = item.product.name || 'Unknown Product'
+        itemSku = item.product.sku || null
+        imageUrl = item.product.image || null
+      } else if (item.notes?.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
+        const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
+        if (motorcycleId) {
+          try {
+            const motoResponse = await fetch(`/api/motorcycles/${motorcycleId}`)
+            if (motoResponse.ok) {
+              const motoData = await motoResponse.json()
+              if (motoData.motorcycle) {
+                itemName = `${motoData.motorcycle.brand || ''} ${motoData.motorcycle.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemSku = motoData.motorcycle.sku || motorcycleId
+                imageUrl = motoData.motorcycle.image || null
               } else {
                 itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemSku = motorcycleId
               }
-            } catch (error) {
-              console.warn('Error fetching motorcycle for PDF:', error)
+            } else {
               itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+              itemSku = motorcycleId
             }
-          } else {
-            itemName = 'Motorcycle'
+          } catch (error) {
+            console.warn('Error fetching motorcycle for PDF:', error)
+            itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+            itemSku = motorcycleId
           }
-        } else {
-          itemName = item.notes
         }
+      } else if (item.notes?.toUpperCase().trim().startsWith('PAYMENT:')) {
+        itemName = t('typePayment')
+        itemSku = 'PAYMENT'
       }
       
       const quantity = Number(item.quantity) || 0
       const unitPrice = Number(item.unitPrice) || 0
       const lineTotal = Number(item.lineTotal) || (quantity * unitPrice)
       
-      return [
-        (index + 1).toString(), // Item number: 1, 2, 3, etc.
-        itemName,
-        quantity.toString(),
-        `${currencySymbol}${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        `${currencySymbol}${lineTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      ]
+      return {
+        row: [
+          (index + 1).toString(),
+          itemName,
+          itemSku || '-',
+          quantity.toString(),
+          `${currencySymbol}${unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`,
+          `${currencySymbol}${lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`
+        ],
+        imageUrl
+      }
+    }))
+    
+    // Load images as base64 and add to table rows
+    const tableData = await Promise.all(tableDataWithImages.map(async (item: any) => {
+      const row = [...item.row]
+      
+      // Try to load image if available
+      if (item.imageUrl) {
+        try {
+          // Convert relative URL to absolute URL for server-side fetch
+          // Note: This runs in browser, so we can use window.location
+          const absoluteImageUrl = item.imageUrl.startsWith('http') 
+            ? item.imageUrl 
+            : `${typeof window !== 'undefined' ? window.location.origin : ''}${item.imageUrl.startsWith('/') ? item.imageUrl : '/' + item.imageUrl}`
+          
+          const imgResponse = await fetch(absoluteImageUrl)
+          if (imgResponse.ok) {
+            const blob = await imgResponse.blob()
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onloadend = () => resolve(reader.result as string)
+              reader.onerror = reject
+              reader.readAsDataURL(blob)
+            })
+            // Insert image as data URL at position 1 (after item number)
+            row.splice(1, 0, { content: base64, rowSpan: 1 } as any)
+          } else {
+            row.splice(1, 0, '')
+          }
+        } catch (error) {
+          console.warn('Error loading image for PDF:', error)
+          row.splice(1, 0, '')
+        }
+      } else {
+        row.splice(1, 0, '')
+      }
+      
+      return row
     }))
     
     if (tableData.length === 0) {
-      console.warn('No items found for PDF generation')
-      // Add a placeholder row if no items
-      tableData.push(['1', 'No items', '0', `${currencySymbol}0.00`, `${currencySymbol}0.00`])
+      tableData.push(['1', '', 'No items', '-', '0', `${currencySymbol}0.00`, `${currencySymbol}0.00`])
     }
 
-    autoTable(doc, {
-      startY: startY,
-      head: [['No', 'Item', 'Quantity', `Unit Price (${currencyLabel})`, `Total (${currencyLabel})`]],
-      body: tableData,
-      theme: 'striped',
-      headStyles: { fillColor: [66, 66, 66], textColor: 255, fontStyle: 'bold' },
-      styles: { fontSize: 9, cellPadding: 3 },
-      columnStyles: {
-        0: { halign: 'center', cellWidth: 15 }, // "No" column
-        1: { cellWidth: 'auto' }, // Item name
-        2: { halign: 'center', cellWidth: 25 }, // Quantity
-        3: { halign: 'right', cellWidth: 40 }, // Unit Price
-        4: { halign: 'right', cellWidth: 40 } // Total
-      }
-    })
-
-    const finalY = (doc as any).lastAutoTable.finalY || startY + 50
-
-    // Customer Balance Information
-    let balanceY = finalY + 10
-    const balanceX = pageWidth - margin - 60
-    
-    // Calculate balance before this invoice
-    // For retail invoices without customers, balance is always 0
-    // Current debt includes this invoice's amountDue, so subtract it to get balance before
+    // Calculate previous balance and total balance now
     const currentDebt = invoice.customer 
       ? (isMotorcycle 
           ? (invoice.customer.debtUsd || 0)
           : (invoice.customer.debtIqd || 0))
-      : 0 // Retail invoices without customers have no debt
+      : 0
     const amountDue = Number(invoice.amountDue || 0)
-    const balanceBefore = invoice.customer ? (currentDebt - amountDue) : 0
+    const previousBalance = invoice.customer ? (currentDebt - amountDue) : 0
+    const totalBalanceNow = currentDebt
+
+    // Items table with images - custom rendering to include images
+    const imageColumnWidth = 20
+    const itemStartY = startY
     
-    doc.setFontSize(11)
+    // Draw header manually
+    doc.setFillColor(66, 66, 66)
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(9)
     doc.setFont('helvetica', 'bold')
-    doc.text('Customer Balance Information:', balanceX, balanceY, { align: 'right' })
-    balanceY += 8
+    let headerX = margin
+    let headerY = itemStartY
     
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text('Balance Before This Invoice:', balanceX, balanceY, { align: 'right' })
-    doc.text(`${currencySymbol}${balanceBefore.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, balanceY, { align: 'right' })
-    balanceY += 10
-
-    // Totals
-    let totalsY = balanceY
-    const totalsX = pageWidth - margin - 60
-
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Invoice Summary:', totalsX, totalsY, { align: 'right' })
-    totalsY += 8
-
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text('Subtotal:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${Number(invoice.subtotal || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-    totalsY += 6
-
-    if (invoice.discount && Number(invoice.discount) > 0) {
-      doc.text('Discount:', totalsX, totalsY, { align: 'right' })
-      doc.text(`${currencySymbol}${Number(invoice.discount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-      totalsY += 6
-    }
-
-    if (invoice.taxAmount && Number(invoice.taxAmount) > 0) {
-      doc.text('Tax:', totalsX, totalsY, { align: 'right' })
-      doc.text(`${currencySymbol}${Number(invoice.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-      totalsY += 6
-    }
-
-    totalsY += 3
-    doc.setFontSize(12)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Total:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${Number(invoice.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-    totalsY += 8
-
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Amount Paid: ${currencySymbol}${Number(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, totalsX, totalsY, { align: 'right' })
-    totalsY += 6
-    doc.text(`Amount Due: ${currencySymbol}${Number(invoice.amountDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, totalsX, totalsY, { align: 'right' })
-    totalsY += 10
-
-    // Total Balance Now
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Total Balance Now:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${currentDebt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-
-    // Footer
-    const footerY = pageHeight - margin
-    doc.setFontSize(8)
-    doc.setTextColor(100, 100, 100)
-    doc.text('Thank you for your business!', pageWidth / 2, footerY, { align: 'center' })
+    // Header row
+    doc.rect(headerX, headerY - 6, 10, 7, 'F')
+    doc.text('#', headerX + 5, headerY - 2, { align: 'center' })
+    headerX += 10
+    
+    doc.rect(headerX, headerY - 6, imageColumnWidth, 7, 'F')
+    doc.text('Image', headerX + imageColumnWidth / 2, headerY - 2, { align: 'center' })
+    headerX += imageColumnWidth
+    
+    const itemNameWidth = pageWidth - margin * 2 - 10 - imageColumnWidth - 25 - 20 - 35 - 35
+    doc.rect(headerX, headerY - 6, itemNameWidth, 7, 'F')
+    doc.text(t('brandName') || 'Product Name', headerX + itemNameWidth / 2, headerY - 2, { align: 'center' })
+    headerX += itemNameWidth
+    
+    doc.rect(headerX, headerY - 6, 25, 7, 'F')
+    doc.text(t('sku') || 'Code', headerX + 12.5, headerY - 2, { align: 'center' })
+    headerX += 25
+    
+    doc.rect(headerX, headerY - 6, 20, 7, 'F')
+    doc.text(t('quantity') || 'Qty', headerX + 10, headerY - 2, { align: 'center' })
+    headerX += 20
+    
+    doc.rect(headerX, headerY - 6, 35, 7, 'F')
+    doc.text(`Unit Price (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+    headerX += 35
+    
+    doc.rect(headerX, headerY - 6, 35, 7, 'F')
+    doc.text(`Total (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+    
+    let currentY = itemStartY + 1
+    const rowHeight = 20
+    
+    // Draw data rows
+    doc.setFillColor(255, 255, 255)
     doc.setTextColor(0, 0, 0)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'normal')
+    
+    for (let i = 0; i < tableData.length; i++) {
+      const row = tableData[i]
+      const itemData = tableDataWithImages[i]
+      
+      // Alternate row color
+      if (i % 2 === 1) {
+        doc.setFillColor(245, 245, 245)
+      } else {
+        doc.setFillColor(255, 255, 255)
+      }
+      
+      // Check if we need a new page
+      if (currentY > pageHeight - margin - 50) {
+        doc.addPage()
+        currentY = margin
+        // Redraw header on new page
+        headerX = margin
+        headerY = currentY
+        doc.setFillColor(66, 66, 66)
+        doc.setTextColor(255, 255, 255)
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.rect(headerX, headerY - 6, 10, 7, 'F')
+        doc.text('#', headerX + 5, headerY - 2, { align: 'center' })
+        headerX += 10
+        doc.rect(headerX, headerY - 6, imageColumnWidth, 7, 'F')
+        doc.text('Image', headerX + imageColumnWidth / 2, headerY - 2, { align: 'center' })
+        headerX += imageColumnWidth
+        doc.rect(headerX, headerY - 6, itemNameWidth, 7, 'F')
+        doc.text(t('brandName') || 'Product Name', headerX + itemNameWidth / 2, headerY - 2, { align: 'center' })
+        headerX += itemNameWidth
+        doc.rect(headerX, headerY - 6, 25, 7, 'F')
+        doc.text(t('sku') || 'Code', headerX + 12.5, headerY - 2, { align: 'center' })
+        headerX += 25
+        doc.rect(headerX, headerY - 6, 20, 7, 'F')
+        doc.text(t('quantity') || 'Qty', headerX + 10, headerY - 2, { align: 'center' })
+        headerX += 20
+        doc.rect(headerX, headerY - 6, 35, 7, 'F')
+        doc.text(`Unit Price (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+        headerX += 35
+        doc.rect(headerX, headerY - 6, 35, 7, 'F')
+        doc.text(`Total (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+        currentY = headerY + 1
+        doc.setFillColor(255, 255, 255)
+        doc.setTextColor(0, 0, 0)
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'normal')
+      }
+      
+      let cellX = margin
+      let cellY = currentY
+      
+      // No column
+      doc.rect(cellX, cellY, 10, rowHeight, 'FD')
+      doc.text(String(row[0]), cellX + 5, cellY + rowHeight / 2 + 2, { align: 'center' })
+      cellX += 10
+      
+      // Image column
+      doc.rect(cellX, cellY, imageColumnWidth, rowHeight, 'FD')
+      if (itemData?.imageUrl && typeof row[1] === 'object' && row[1].content) {
+        try {
+          const base64Data = row[1].content.split(',')[1]
+          const imageFormat = row[1].content.split(';')[0].split('/')[1]
+          const format = imageFormat === 'png' ? 'PNG' : 'JPEG'
+          const maxWidth = imageColumnWidth - 2
+          const maxHeight = rowHeight - 2
+          doc.addImage(base64Data, format, cellX + 1, cellY + 1, maxWidth, maxHeight, undefined, 'FAST')
+        } catch (error) {
+          console.warn('Error adding image to PDF:', error)
+        }
+      }
+      cellX += imageColumnWidth
+      
+      // Item name
+      doc.rect(cellX, cellY, itemNameWidth, rowHeight, 'FD')
+      doc.text(String(row[2] || row[1]), cellX + 2, cellY + rowHeight / 2 + 2, { maxWidth: itemNameWidth - 4 })
+      cellX += itemNameWidth
+      
+      // SKU/Code
+      doc.rect(cellX, cellY, 25, rowHeight, 'FD')
+      doc.text(String(row[3] || row[2]), cellX + 12.5, cellY + rowHeight / 2 + 2, { align: 'center' })
+      cellX += 25
+      
+      // Quantity
+      doc.rect(cellX, cellY, 20, rowHeight, 'FD')
+      doc.text(String(row[4] || row[3]), cellX + 10, cellY + rowHeight / 2 + 2, { align: 'center' })
+      cellX += 20
+      
+      // Unit Price
+      doc.rect(cellX, cellY, 35, rowHeight, 'FD')
+      doc.text(String(row[5] || row[4]), cellX + 33, cellY + rowHeight / 2 + 2, { align: 'right' })
+      cellX += 35
+      
+      // Total
+      doc.rect(cellX, cellY, 35, rowHeight, 'FD')
+      doc.text(String(row[6] || row[5]), cellX + 33, cellY + rowHeight / 2 + 2, { align: 'right' })
+      
+      currentY += rowHeight
+    }
+    
+    const finalY = currentY + 10
+
+    // Footer table: Total of This Invoice, Amount Paid, Previous Balance, Total Balance Now
+    const footerTableY = finalY + 10
+    const footerTableWidth = pageWidth - margin * 2
+    
+    // Draw footer table
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'normal')
+    
+    // Total of This Invoice row
+    doc.setFillColor(245, 245, 245)
+    doc.rect(margin, footerTableY, footerTableWidth, 8, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${t('totalOfThisInvoice') || t('subtotal') || 'Total of This Invoice'} (${currencyLabel}):`, margin + 5, footerTableY + 5.5)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${currencySymbol}${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, footerTableY + 5.5, { align: 'right' })
+    
+    let nextRowY = footerTableY + 8
+    
+    // Amount Paid row
+    if (invoice.amountPaid > 0) {
+      doc.setFillColor(255, 255, 255)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('amountPaid') || 'Amount Paid'}:`, margin + 5, nextRowY + 5.5)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`${currencySymbol}${invoice.amountPaid.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
+      nextRowY += 8
+    }
+    
+    if (invoice.customer) {
+      // Previous Balance row
+      doc.setFillColor(255, 255, 255)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('balanceBeforeInvoice') || 'Previous Balance'}:`, margin + 5, nextRowY + 5.5)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`${currencySymbol}${previousBalance.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
+      nextRowY += 8
+      
+      // Total Balance Now row (bold border)
+      doc.setFillColor(245, 245, 245)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+      doc.setDrawColor(0, 0, 0)
+      doc.setLineWidth(0.5)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'D')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('totalBalanceNow') || 'Total Balance Now'}:`, margin + 5, nextRowY + 5.5)
+      doc.text(`${currencySymbol}${totalBalanceNow.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
+    }
 
     // Save PDF
-    doc.save(`invoice-${invoiceNumber}-${new Date().getTime()}.pdf`)
+    doc.save(`invoice-${invoiceCode}-${new Date().getTime()}.pdf`)
   }
 
   const handleStayInSales = () => {
@@ -374,7 +529,7 @@ export function InvoiceSuccessDialog({
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent 
-        className={cn("!max-w-[500px] w-[100vw]", fontClass)} 
+        className={cn("!max-w-[600px] w-[95vw] sm:w-full", fontClass)} 
         style={{ direction } as React.CSSProperties}
       >
         <AlertDialogHeader>
@@ -387,47 +542,47 @@ export function InvoiceSuccessDialog({
             className={cn(direction === 'rtl' && 'text-right', fontClass, "text-xl text-center")}
             style={{ direction } as React.CSSProperties}
           >
-            {t('invoiceSubmittedSuccessfully')}
+            {t('invoiceSubmittedSuccessfully', { invoiceNumber: invoiceNumber || 'N/A' })}
           </AlertDialogTitle>
           <div className="mt-4 text-center space-y-3">
             <div className="flex items-center justify-center gap-2">
               <IconFileInvoice className="h-5 w-5 text-muted-foreground" />
               <span className={cn("font-semibold text-lg", fontClass)}>{t('invoiceNumber')}</span>
             </div>
-            <div className="bg-muted rounded-lg p-4 border-2 border-primary/20">
-              <span className={cn("text-2xl font-bold text-primary", fontClass)}>
+            <div className="bg-muted rounded-lg p-4 border-2 border-primary/20 break-words overflow-wrap-anywhere">
+              <span className={cn("text-xl sm:text-2xl font-bold text-primary break-words", fontClass)} style={{ wordBreak: 'break-all' }}>
                 {invoiceNumber}
               </span>
             </div>
           </div>
         </AlertDialogHeader>
 
-        <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+        <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <Button
-            onClick={handleGoToInvoices}
-            className={cn("w-full sm:flex-1 bg-primary hover:bg-primary/90", fontClass)}
+            onClick={handleStayInSales}
+            variant="outline"
+            className={cn("w-full sm:w-auto order-3 sm:order-1", fontClass)}
             size="lg"
           >
-            <IconFileInvoice className="h-4 w-4 mr-2" />
-            {t('goToInvoices')}
+            <IconX className={cn("h-4 w-4", direction === 'rtl' ? 'ml-2' : 'mr-2')} />
+            {t('stayInSales')}
           </Button>
           <Button
             onClick={handlePrintPDF}
             variant="outline"
-            className={cn("w-full sm:flex-1", fontClass)}
+            className={cn("w-full sm:w-auto order-2", fontClass)}
             size="lg"
           >
-            <IconPrinter className="h-4 w-4 mr-2" />
+            <IconPrinter className={cn("h-4 w-4", direction === 'rtl' ? 'ml-2' : 'mr-2')} />
             {t('printPdf')}
           </Button>
           <Button
-            onClick={handleStayInSales}
-            variant="outline"
-            className={cn("w-full sm:flex-1", fontClass)}
+            onClick={handleGoToInvoices}
+            className={cn("w-full sm:w-auto bg-primary hover:bg-primary/90 order-1 sm:order-3", fontClass)}
             size="lg"
           >
-            <IconX className="h-4 w-4 mr-2" />
-            {t('stayInSales')}
+            <IconFileInvoice className={cn("h-4 w-4", direction === 'rtl' ? 'ml-2' : 'mr-2')} />
+            {t('goToInvoices')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

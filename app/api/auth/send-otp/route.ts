@@ -29,10 +29,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if email ends with @arb-groups.com
-    if (!email.endsWith('@arb-groups.com')) {
+    // Check if email is allowed: @arb-groups.com domain OR specific admin email
+    const isArbGroupsEmail = email.endsWith('@arb-groups.com');
+    const isAdminEmail = email === 'hamajamalsabr@gmail.com';
+    
+    if (!isArbGroupsEmail && !isAdminEmail) {
       return NextResponse.json(
-        { error: 'Only @arb-groups.com emails are allowed' },
+        { error: 'Only @arb-groups.com emails or authorized admin emails are allowed' },
         { status: 400 }
       );
     }

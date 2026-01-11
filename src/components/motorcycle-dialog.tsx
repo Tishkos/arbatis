@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useTranslations } from 'next-intl'
 import { getTextDirection } from '@/lib/i18n'
-import { IconCamera, IconPaperclip, IconX, IconAlertTriangle } from '@tabler/icons-react'
+import { IconCamera, IconPaperclip, IconX, IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -31,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import { cn, generateSkuCode } from '@/lib/utils'
 import { Plus, Edit } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -144,7 +144,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
     } else if (!motorcycle && open) {
       setBrand('')
       setModel('')
-      setSku('')
+      setSku(generateSkuCode()) // Auto-generate SKU for new motorcycles
       setYear('')
       setEngineSize('')
       setVin('')
@@ -483,6 +483,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
                   <Label htmlFor="sku" className={cn(fontClass, "flex items-center gap-1")}>
                     {t('dialog.sku')} <span className="text-destructive">*</span>
                   </Label>
+                  <div className="flex gap-2">
                   <Input
                     id="sku"
                     value={sku}
@@ -490,6 +491,19 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
                     placeholder={t('dialog.skuPlaceholder')}
                     className={fontClass}
                   />
+                    {!isEditMode && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setSku(generateSkuCode())}
+                        title="Generate new code"
+                        className="flex-shrink-0"
+                      >
+                        <IconRefresh className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                   <p className={cn("text-xs text-muted-foreground", fontClass)}>
                     {t('dialog.skuHint')}
                   </p>

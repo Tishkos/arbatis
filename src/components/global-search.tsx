@@ -307,7 +307,7 @@ export function GlobalSearch() {
                       {invoice.invoiceNumber}
                     </div>
                     <div className={cn("text-xs text-muted-foreground mt-1", fontClass)}>
-                      {invoice.customer?.name || 'Unknown'} • {formatPrice(invoice.total)} • {invoice.status}
+                      {invoice.customer?.name || 'Unknown'} • {formatPrice(invoice.total)}
                     </div>
                   </div>
                 </CommandItem>

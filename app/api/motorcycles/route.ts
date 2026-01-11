@@ -144,12 +144,58 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       )
     }
-    if (!sku || !sku.trim()) {
+    // Generate SKU if not provided, or check uniqueness if provided
+    let finalSku = sku?.trim() || ''
+    
+    if (!finalSku) {
+      // Generate random 6-character alphanumeric code
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      let generated = ''
+      
+      // Ensure uniqueness - try up to 10 times
+      for (let attempt = 0; attempt < 10; attempt++) {
+        generated = ''
+        for (let i = 0; i < 6; i++) {
+          generated += chars.charAt(Math.floor(Math.random() * chars.length))
+        }
+        
+        const existingProduct = await prisma.product.findUnique({
+          where: { sku: generated },
+        })
+        const existingMotorcycle = await prisma.motorcycle.findUnique({
+          where: { sku: generated },
+        })
+        
+        if (!existingProduct && !existingMotorcycle) {
+          finalSku = generated
+          break
+        }
+      }
+      
+      // If still no unique SKU after 10 attempts, return error
+      if (!finalSku) {
+        return NextResponse.json(
+          { error: 'Failed to generate unique SKU. Please try again.' },
+          { status: 500 }
+        )
+      }
+    } else {
+      // Check if user-provided SKU already exists
+      const existingProduct = await prisma.product.findUnique({
+        where: { sku: finalSku },
+      })
+      const existingMotorcycle = await prisma.motorcycle.findUnique({
+        where: { sku: finalSku },
+      })
+
+      if (existingProduct || existingMotorcycle) {
       return NextResponse.json(
-        { error: 'SKU is required' },
+          { error: 'SKU already exists in products or motorcycles' },
         { status: 400 }
       )
     }
+    }
+    
     if (!usdRetailPrice || parseFloat(usdRetailPrice) <= 0) {
       return NextResponse.json(
         { error: 'USD Retail price must be greater than 0' },
@@ -159,29 +205,6 @@ export async function POST(request: NextRequest) {
     if (!usdWholesalePrice || parseFloat(usdWholesalePrice) <= 0) {
       return NextResponse.json(
         { error: 'USD Wholesale price must be greater than 0' },
-        { status: 400 }
-      )
-    }
-
-    // Check if SKU already exists in products or motorcycles
-    const existingProduct = await prisma.product.findUnique({
-      where: { sku: sku.trim() },
-    })
-
-    if (existingProduct) {
-      return NextResponse.json(
-        { error: 'SKU already exists in products' },
-        { status: 400 }
-      )
-    }
-
-    const existingMotorcycle = await prisma.motorcycle.findUnique({
-      where: { sku: sku.trim() },
-    })
-
-    if (existingMotorcycle) {
-      return NextResponse.json(
-        { error: 'SKU already exists in motorcycles' },
         { status: 400 }
       )
     }
@@ -239,8 +262,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Generate filename based on SKU (sanitized)
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -265,8 +287,7 @@ export async function POST(request: NextRequest) {
         await mkdir(attachmentsDir, { recursive: true })
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -310,7 +331,7 @@ export async function POST(request: NextRequest) {
       data: {
         brand: brand.trim(),
         model: model.trim(),
-        sku: sku.trim(),
+        sku: finalSku,
         year: year ? parseInt(year) : null,
         engineSize: engineSize?.trim() || null,
         vin: vin?.trim() || null,

@@ -573,7 +573,7 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
               <span>${customer.name}</span>
             </div>
             <div class="info-row">
-              <span><strong>Code (SKU):</strong></span>
+              <span><strong>${t('columns.code')}:</strong></span>
               <span>${customer.sku}</span>
             </div>
             ${customer.phone ? `
@@ -1472,12 +1472,12 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>Code (SKU)</label>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('columns.code')}</label>
                       <p className={cn("mt-1 text-sm font-mono", fontClass)}>{customer.sku}</p>
                     </div>
                     {customer.address && (
                       <div>
-                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>Address</label>
+                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('columns.address')}</label>
                         <p className={cn("mt-1 text-sm", fontClass)}>
                           {typeof customer.address === 'object' && customer.address !== null 
                             ? customer.address.name 

@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useParams } from "next/navigation"
+import { useTranslations } from "next-intl"
 import { getTextDirection } from "@/lib/i18n"
 import { format } from "date-fns"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -91,6 +92,7 @@ interface Motorcycle {
 
 export function SalesInvoiceDialog({ open, onOpenChange, saleType, locale, onSuccess }: SalesInvoiceDialogProps) {
   const params = useParams()
+  const t = useTranslations('navigation.salesOptions')
   const fontClass = locale === 'ku' ? 'font-kurdish' : 'font-engar'
   const direction = getTextDirection(locale as 'ku' | 'en' | 'ar')
   
@@ -532,7 +534,7 @@ export function SalesInvoiceDialog({ open, onOpenChange, saleType, locale, onSuc
                     checked={isReturn}
                     onCheckedChange={setIsReturn}
                   />
-                  <Label htmlFor="is-return">Is Return (Credit Note)</Label>
+                  <Label htmlFor="is-return" className={fontClass}>{t('isReturnCreditNote')}</Label>
                 </div>
                 <div className="flex items-center space-x-2">
                   <Switch
@@ -668,7 +670,7 @@ export function SalesInvoiceDialog({ open, onOpenChange, saleType, locale, onSuc
                 </div>
 
                 <div className="flex justify-between text-sm">
-                  <span>Total Quantity: {totalQty}</span>
+                  <span className={fontClass}>{t('totalQuantity')}: {totalQty}</span>
                   <span>Total (ع.د): {total.toFixed(2)}</span>
                 </div>
               </div>

@@ -218,17 +218,24 @@ const createColumns = (
             return 'bg-purple-500'
           case 'EMPLOYEE':
             return 'bg-blue-500'
-          case 'CASHIER':
-            return 'bg-green-500'
           case 'VIEWER':
             return 'bg-gray-500'
           default:
             return 'bg-gray-500'
         }
       }
+      const getRoleLabel = (role: string) => {
+        const roleMap: Record<string, string> = {
+          'DEVELOPER': t('roles.developer'),
+          'ADMIN': t('roles.admin'),
+          'EMPLOYEE': t('roles.employee'),
+          'VIEWER': t('roles.viewer'),
+        }
+        return roleMap[role] || role
+      }
       return (
         <Badge className={cn("text-white", getRoleColor(user.role))}>
-          {user.role === 'ADMIN' ? t('admin') : user.role}
+          {getRoleLabel(user.role)}
         </Badge>
       )
     },
@@ -308,13 +315,12 @@ const createColumns = (
           >
             <div className={cn("px-2 py-1.5 text-sm font-semibold", fontClass)}>{t('changeRole')}</div>
             <DropdownMenuSeparator />
-            {['DEVELOPER', 'ADMIN', 'EMPLOYEE', 'CASHIER', 'VIEWER'].map((role) => {
+            {['DEVELOPER', 'ADMIN', 'EMPLOYEE', 'VIEWER'].map((role) => {
               const getRoleLabel = (role: string) => {
                 const roleMap: Record<string, string> = {
                   'DEVELOPER': t('roles.developer'),
                   'ADMIN': t('roles.admin'),
                   'EMPLOYEE': t('roles.employee'),
-                  'CASHIER': t('roles.cashier'),
                   'VIEWER': t('roles.viewer'),
                 }
                 return roleMap[role] || role
@@ -525,6 +531,7 @@ export function EmployeesTable() {
                       'role': t('columnHeaders.role'),
                       'status': t('columnHeaders.status'),
                       'createdAt': t('columnHeaders.joined'),
+                      'actions': t('actions'),
                     }
                     return labelMap[columnId] || columnId
                   }

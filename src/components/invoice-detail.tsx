@@ -315,7 +315,6 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
 
-    const currentDate = format(new Date(), 'PPpp')
     const dir = isRTL ? 'rtl' : 'ltr'
 
     // Escape HTML
@@ -325,49 +324,229 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       return div.innerHTML
     }
 
+    // Load background image and convert to base64
+    let backgroundImageDataUrl = ''
+    try {
+      const bgImageUrl = `${window.location.origin}/assets/print/printbackground.png`
+      const bgImgResponse = await fetch(bgImageUrl)
+      if (bgImgResponse.ok) {
+        const blob = await bgImgResponse.blob()
+        backgroundImageDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = () => {
+            if (reader.result) {
+              resolve(reader.result as string)
+            } else {
+              reject(new Error('Failed to read background image'))
+            }
+          }
+          reader.onerror = () => reject(new Error('FileReader error'))
+          reader.readAsDataURL(blob)
+        })
+      }
+    } catch (error) {
+      console.warn('Error loading background image for print:', error)
+    }
+
+    // Extract 6-character code from invoice number (last part after last dash)
+    const invoiceParts = invoice.invoiceNumber.split('-')
+    const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoice.invoiceNumber.slice(-6)
+
+    // Format date as MM/DD/YYYY HH:MM AM/PM
+    const invoiceDate = new Date(invoice.invoiceDate)
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
+    const day = String(invoiceDate.getDate()).padStart(2, '0')
+    const year = invoiceDate.getFullYear()
+    const hours = invoiceDate.getHours()
+    const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    const displayHours = hours % 12 || 12
+    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
+
+    // Get customer name and address
+    let customerName = 'Unknown'
+    let customerAddress = ''
+    
+    if (invoice.customer) {
+      customerName = invoice.customer.name || 'Unknown'
+      // Try to get address from customer - fetch full customer data if needed
+      try {
+        const customerResponse = await fetch(`/api/customers/${invoice.customer.id}`)
+        if (customerResponse.ok) {
+          const customerData = await customerResponse.json()
+          // Handle address - it can be an object with { id, name } or a string
+          const addr = customerData.address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = customerData.phone || customerData.email || invoice.customer.phone || invoice.customer.email || ''
+          }
+        } else {
+          const addr = (invoice.customer as any).address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = invoice.customer.phone || invoice.customer.email || ''
+          }
+        }
+      } catch (error) {
+        const addr = (invoice.customer as any).address
+        if (addr) {
+          customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+            ? addr.name 
+            : (typeof addr === 'string' ? addr : '')
+        }
+        if (!customerAddress) {
+          customerAddress = invoice.customer.phone || invoice.customer.email || ''
+        }
+      }
+    } else {
+      // Extract customer name from invoice number for retail invoices
+      const parts = invoice.invoiceNumber.split('-')
+      const yearIndex = parts.findIndex(part => /^(19|20)\d{2}$/.test(part))
+      if (yearIndex > 0) {
+        customerName = parts.slice(0, yearIndex).join('-')
+      }
+    }
+
     // Get items to display
     const itemsToDisplay = (invoice.items && invoice.items.length > 0) 
       ? invoice.items 
       : (invoice.sale?.items || [])
 
-    // Fetch images and details for items (products and motorcycles)
-    const itemsWithImages = await Promise.all(itemsToDisplay.map(async (item: any) => {
-      let imageUrl: string | null = null
+    // Fetch item details with images
+    const origin = window.location.origin
+    
+    // Check if images exist before including them in HTML
+    const itemsWithDetails = await Promise.all(itemsToDisplay.map(async (item: any) => {
       let sku: string | null = null
       let brandOrProductName: string | null = null
+      let imageUrl: string | null = null
       
       // Check if it's a product item
       if (item.product) {
-        imageUrl = item.product.image || null
         sku = item.product.sku || null
         brandOrProductName = item.product.name || null
+        
+        // Construct image path from product SKU (lowercase)
+        // Format: http://localhost:3000/products/{sku}.jpg (e.g., f05a9j.jpg for SKU F05A9J)
+        if (sku) {
+          const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
+          const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
+          
+          // Check if image exists
+          try {
+            const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
+            if (imgResponse.ok && imgResponse.status === 200) {
+              imageUrl = potentialImageUrl
+            }
+          } catch (error) {
+            // Image doesn't exist, leave imageUrl as null
+          }
+        }
       } 
       // Check if it's a motorcycle item
       else if (item.notes?.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
         const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
         if (motorcycleId) {
+          // Fetch motorcycle details from API
           try {
-            const motoResponse = await fetch(`/api/motorcycles/${motorcycleId}`)
-            if (motoResponse.ok) {
-              const motoData = await motoResponse.json()
-              if (motoData.motorcycle) {
-                imageUrl = motoData.motorcycle.image || null
-                sku = motoData.motorcycle.sku || null
-                brandOrProductName = motoData.motorcycle.brand || null
+            const motorcycleResponse = await fetch(`${origin}/api/motorcycles/${motorcycleId}`)
+            if (motorcycleResponse.ok) {
+              const motorcycleData = await motorcycleResponse.json()
+              if (motorcycleData.motorcycle) {
+                const moto = motorcycleData.motorcycle
+                sku = moto.sku || motorcycleId
+                brandOrProductName = `${moto.brand || ''} ${moto.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                
+                // Construct motorcycle image path from SKU
+                if (sku) {
+                  const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
+                  const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
+                  
+                  // Check if image exists
+                  try {
+                    const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
+                    if (imgResponse.ok && imgResponse.status === 200) {
+                      imageUrl = potentialImageUrl
+                    }
+                  } catch (error) {
+                    // Image doesn't exist, leave imageUrl as null
+                  }
+                }
+              } else {
+                // Motorcycle not found, use fallback
+                sku = motorcycleId
+                brandOrProductName = `Motorcycle ${motorcycleId.slice(0, 8)}`
               }
+            } else {
+              // Fetch failed, use fallback
+              sku = motorcycleId
+              brandOrProductName = `Motorcycle ${motorcycleId.slice(0, 8)}`
             }
           } catch (error) {
-            console.warn('Error fetching motorcycle details for print:', error)
+            // Fetch error, use fallback
+            sku = motorcycleId
+            brandOrProductName = `Motorcycle ${motorcycleId.slice(0, 8)}`
           }
         }
       } else if (item.notes?.toUpperCase().trim().startsWith('PAYMENT:')) {
-        // Payment item
         sku = 'PAYMENT'
         brandOrProductName = t('typePayment')
+      } else {
+        // If product is null but productId exists, try to fetch the product
+        // This handles cases where product was deleted or relation is missing
+        if (!item.product && item.productId) {
+          try {
+            const productResponse = await fetch(`${origin}/api/products/${item.productId}`)
+            if (productResponse.ok) {
+              const productData = await productResponse.json()
+              if (productData.product) {
+                sku = productData.product.sku || null
+                brandOrProductName = productData.product.name || null
+                // Try to get image URL if SKU exists
+                if (sku) {
+                  const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
+                  const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
+                  try {
+                    const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
+                    if (imgResponse.ok && imgResponse.status === 200) {
+                      imageUrl = potentialImageUrl
+                    }
+                  } catch (error) {
+                    // Image doesn't exist
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            // Failed to fetch product, leave as null
+          }
+        }
+        // If still no name, use a better fallback
+        if (!brandOrProductName) {
+          brandOrProductName = item.notes || (item.productId ? `Item ${item.productId.slice(0, 8)}` : 'Unknown Item')
+        }
       }
       
-      return { ...item, imageUrl, sku, brandOrProductName }
+      return { ...item, sku, brandOrProductName, imageUrl }
     }))
+
+    // Calculate previous balance (balance before this invoice)
+    const currentDebt = invoice.customer 
+      ? (isMotorcycle 
+          ? (invoice.customer.debtUsd || 0)
+          : (invoice.customer.debtIqd || 0))
+      : 0
+    const amountDue = Number(invoice.amountDue || 0)
+    const previousBalance = invoice.customer ? (currentDebt - amountDue) : 0
+    const totalBalanceNow = currentDebt
 
     const printContent = `
 <!DOCTYPE html>
@@ -375,11 +554,11 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(t('invoiceInformation'))} - ${escapeHtml(invoice.invoiceNumber)}</title>
+  <title>Invoice - ${escapeHtml(invoiceCode)}</title>
   <style>
     @page {
       size: A4;
-      margin: 1cm;
+      margin: 0;
     }
     
     * {
@@ -397,88 +576,141 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     body {
       font-family: 'Kurdish', 'Arial Unicode MS', Arial, sans-serif;
       direction: ${dir};
-      padding: 20px;
       font-size: 10pt;
       color: #000;
+      margin: 0;
+      padding: 0;
     }
     
-    .header {
-      text-align: center;
-      margin-bottom: 20px;
-      border-bottom: 2px solid #000;
-      padding-bottom: 15px;
+    .invoice-container {
+      width: 210mm;
+      position: relative;
+      margin: 0;
+      padding: 0;
     }
     
-    .header h1 {
-      font-size: 18pt;
-      font-weight: bold;
-      margin-bottom: 10px;
-      color: #000;
+    .first-page-header {
+      width: 100%;
+      height: 63mm;
+      position: relative;
+      background-image: ${backgroundImageDataUrl ? `url('${backgroundImageDataUrl}')` : 'none'};
+      background-size: cover;
+      background-position: top center;
+      background-repeat: no-repeat;
+      margin: 0;
+      padding: 0;
+      page-break-after: avoid;
     }
     
-    .header-info {
-      font-size: 9pt;
-      color: #666;
-      margin-top: 5px;
+    .customer-fields {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      pointer-events: none;
     }
     
-    .info-section {
-      margin-bottom: 20px;
-      padding: 15px;
-      background-color: #f5f5f5;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    
-    .info-row {
+    .field-box {
+      position: absolute;
+      background-color: transparent;
+      padding: 10px 12px;
+      min-height: 38px;
       display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 9pt;
+      align-items: center;
+      font-weight: 600;
+      font-size: 11pt;
+      pointer-events: auto;
     }
     
-    .info-row:last-child {
-      margin-bottom: 0;
+    /* Individual field positioning - you can adjust these values */
+    .field-customer-name {
+      bottom: 09.5mm;
+      right: 35mm;
+      width: 70mm;
+    }
+    
+    .field-customer-address {
+      bottom: -1.5mm;
+      right: 35mm;
+      width: 70mm;
+    }
+    
+    .field-invoice-date {
+        bottom: 09.5mm;
+      left: 8mm;
+      width: 70mm;
+    }
+    
+    .field-invoice-code {
+       bottom: -1.5mm;
+      left: 8mm;
+      width: 70mm;
+    }
+    
+    .content-area {
+      padding: 0 10mm 10mm 10mm;
+      margin-top: ${backgroundImageDataUrl ? '0' : '15mm'};
     }
     
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 15px;
-      table-layout: auto;
-      word-wrap: break-word;
-      page-break-inside: auto;
+      margin-top: ${backgroundImageDataUrl ? '3mm' : '10mm'};
+      margin-bottom: 3mm;
+      table-layout: fixed;
+      font-size: 8.5pt;
     }
     
     thead {
       display: table-header-group;
-      background-color: #424242;
+      background-color: #224880 !important;
       color: #FFFFFF;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      color-adjust: exact;
     }
     
-    th {
-      padding: 8px;
-      text-align: ${isRTL ? 'right' : 'left'};
-      border: 1px solid #C8C8C8;
-      font-weight: bold;
-      font-size: 9pt;
-      vertical-align: middle;
+    thead tr {
+      page-break-after: avoid;
     }
     
     tbody {
       display: table-row-group;
     }
     
-    tr {
-      page-break-inside: avoid;
-      break-inside: avoid;
+    tbody tr {
+      page-break-inside: auto;
+    }
+    
+    tbody tr:nth-child(odd) {
+      background-color: #f5f5f5;
+    }
+    
+    tbody tr:nth-child(even) {
+      background-color: #FFFFFF;
+    }
+    
+    th {
+      padding: 6px 5px;
+      text-align: ${isRTL ? 'right' : 'left'};
+      border: 1px solid #C8C8C8;
+      font-weight: bold;
+      font-size: 8.5pt;
+      vertical-align: middle;
+      background-color: #224880 !important;
+      color: #FFFFFF;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      color-adjust: exact;
     }
     
     td {
-      padding: 6px;
+      padding: 4px 5px;
       border: 1px solid #C8C8C8;
       vertical-align: middle;
-      font-size: 9pt;
+      font-size: 8pt;
+      word-wrap: break-word;
     }
     
     .text-right {
@@ -489,230 +721,256 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       text-align: center;
     }
     
-    .footer {
-      margin-top: 20px;
-      padding-top: 15px;
-      border-top: 1px solid #000;
-      text-align: center;
-      font-size: 8pt;
-      color: #666;
+    .footer-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 5mm;
+      page-break-inside: avoid;
+      font-size: 8.5pt;
+    }
+    
+    .footer-table td {
+      padding: 5px 8px;
+      border: 1px solid #C8C8C8;
+      font-size: 8.5pt;
+      background-color: #224880;
+      color: #FFFFFF;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      color-adjust: exact;
+    }
+    
+    .footer-table td:first-child {
+      font-weight: bold;
+      width: 50%;
+    }
+    
+    .footer-table td:last-child {
+      text-align: right;
     }
     
     @media print {
       body {
         padding: 0;
+        margin: 0;
+      }
+      
+      .invoice-container {
+        page-break-after: auto;
+      }
+      
+      .first-page-header {
+        page-break-after: avoid;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color-adjust: exact;
       }
       
       .no-print {
         display: none;
       }
+      
+      table {
+        page-break-inside: auto;
+      }
+      
+      thead {
+        display: table-header-group;
+        background-color: #224880 !important;
+        color: #FFFFFF !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      
+      thead th {
+        background-color: #224880 !important;
+        color: #FFFFFF !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      
+      th {
+        color: #FFFFFF !important;
+      }
+      
+      tbody tr {
+        page-break-inside: auto;
+        break-inside: auto;
+      }
+      
+      tbody tr:nth-child(odd) {
+        background-color: #f5f5f5 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color-adjust: exact;
+      }
+      
+      tbody tr:nth-child(even) {
+        background-color: #FFFFFF !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color-adjust: exact;
+      }
+      
+      .footer-table td {
+        background-color: #224880 !important;
+        color: #FFFFFF !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      
+      img {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        max-width: 100%;
+        height: auto;
+      }
+      
+      @page {
+        margin-bottom: 20mm;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>${escapeHtml(t('invoiceInformation'))}</h1>
-    <div class="header-info">
-      <div><strong>${escapeHtml(t('invoiceNumber'))}:</strong> ${escapeHtml(invoice.invoiceNumber)}</div>
-      <div><strong>${escapeHtml(t('type'))}:</strong> ${escapeHtml(getTypeLabel())}</div>
-      <div><strong>${escapeHtml(t('invoiceDate'))}:</strong> ${escapeHtml(format(new Date(invoice.invoiceDate), 'PPpp'))}</div>
+  <div class="invoice-container">
+    ${backgroundImageDataUrl ? `
+    <div class="first-page-header">
+      <div class="customer-fields">
+        <div class="field-box field-customer-name">${escapeHtml(customerName)}</div>
+        <div class="field-box field-customer-address">${escapeHtml(customerAddress || '-')}</div>
+        <div class="field-box field-invoice-date">${escapeHtml(formattedDate)}</div>
+        <div class="field-box field-invoice-code">${escapeHtml(invoiceCode)}</div>
+      </div>
     </div>
-  </div>
-  
-  <div class="info-section">
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('invoiceNumber'))}:</strong></span>
-      <span>${escapeHtml(invoice.invoiceNumber)}</span>
+    ` : `
+    <div style="padding: 15mm 10mm; padding-bottom: 0;">
+      <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #000;">
+        <div style="margin-bottom: 5px; font-size: 11pt;">
+          <span style="font-weight: bold; display: inline-block; min-width: 120px;">${escapeHtml(t('customer') || 'Customer')}:</span>
+          <span>${escapeHtml(customerName)}</span>
+        </div>
+        ${customerAddress ? `
+        <div style="margin-bottom: 5px; font-size: 11pt;">
+          <span style="font-weight: bold; display: inline-block; min-width: 120px;">${escapeHtml(t('address') || 'Address')}:</span>
+          <span>${escapeHtml(customerAddress)}</span>
+        </div>
+        ` : ''}
+        <div style="margin-bottom: 5px; font-size: 11pt;">
+          <span style="font-weight: bold; display: inline-block; min-width: 120px;">${escapeHtml(t('invoiceDate') || 'Date')}:</span>
+          <span>${escapeHtml(formattedDate)}</span>
+        </div>
+        <div style="margin-bottom: 5px; font-size: 11pt;">
+          <span style="font-weight: bold; display: inline-block; min-width: 120px;">${escapeHtml(t('invoiceNumber') || 'Invoice')}:</span>
+          <span>${escapeHtml(invoiceCode)}</span>
+        </div>
+      </div>
     </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('type'))}:</strong></span>
-      <span>${escapeHtml(getTypeLabel())}</span>
+    `}
+    <div class="content-area">
+      <!-- Items Table -->
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 6%;">#</th>
+            <th style="width: 8%;">${escapeHtml((() => {
+              try {
+                const translation = t('image')
+                if (translation && !translation.includes('navigation.invoiceDetail') && !translation.includes('image')) {
+                  return translation
+                }
+              } catch (e) {}
+              return locale === 'ku' ? 'وێنە' : locale === 'ar' ? 'صورة' : 'Image'
+            })())}</th>
+            <th style="width: 28%;">${escapeHtml(t('brandName') || 'Product Name')}</th>
+            <th style="width: 12%;">${escapeHtml(t('sku') || 'Code')}</th>
+            <th style="width: 8%;" class="text-right">${escapeHtml(t('quantity') || 'Qty')}</th>
+            <th style="width: 20%;" class="text-right">${escapeHtml(t('unitPrice') || 'Unit Price')} (${currencyLabel})</th>
+            <th style="width: 20%;" class="text-right">${escapeHtml(t('totalPrice') || 'Total')} (${currencyLabel})</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsWithDetails.length > 0 ? itemsWithDetails.map((item: any, index: number) => {
+            const brandOrProductName = item.brandOrProductName || 'Unknown'
+            const skuCode = item.sku || '-'
+            const imageCell = item.imageUrl 
+              ? `<td class="text-center" style="padding: 2px; width: 30px; height: 30px; min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px; vertical-align: middle;"><img src="${item.imageUrl}" alt="${escapeHtml(brandOrProductName)}" style="max-width: 25px; max-height: 25px; width: 25px; height: 25px; object-fit: contain; display: block; margin: 0 auto; -webkit-print-color-adjust: exact; print-color-adjust: exact;" onerror="this.parentElement.innerHTML='<span style=\\'display: inline-block; width: 25px; height: 25px; line-height: 25px;\\'>-</span>';" /></td>`
+              : `<td class="text-center" style="padding: 2px; width: 30px; height: 30px; min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px; vertical-align: middle;"><span style="display: inline-block; width: 25px; height: 25px; line-height: 25px;">-</span></td>`
+            
+            return `
+            <tr>
+              <td class="text-center">${index + 1}</td>
+              ${imageCell}
+              <td>${escapeHtml(brandOrProductName)}</td>
+              <td>${escapeHtml(skuCode)}</td>
+              <td class="text-right">${item.quantity}</td>
+              <td class="text-right">${currencySymbol}${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+              <td class="text-right">${currencySymbol}${item.lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+            </tr>
+          `
+          }).join('') : `
+            <tr>
+              <td colspan="7" class="text-center">${escapeHtml(t('noItems'))}</td>
+            </tr>
+          `}
+        </tbody>
+      </table>
+      
+      <!-- Footer Table: Total of This Invoice, Amount Paid, Previous Balance, Total Balance Now -->
+      <table class="footer-table">
+        <tbody>
+          <tr>
+            <td>${escapeHtml(t('totalOfThisInvoice') || t('subtotal') || 'Total of This Invoice')} (${currencyLabel}):</td>
+            <td>${currencySymbol}${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+          </tr>
+          <tr>
+            <td>${escapeHtml(t('amountPaid') || 'Amount Paid')}:</td>
+            <td>${currencySymbol}${(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+          </tr>
+          ${invoice.customer ? `
+          <tr>
+            <td>${escapeHtml(t('balanceBeforeInvoice') || 'Previous Balance')}:</td>
+            <td>${currencySymbol}${previousBalance.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+          </tr>
+          <tr style="border-top: 2px solid #FFFFFF; font-weight: bold;">
+            <td>${escapeHtml(t('totalBalanceNow') || 'Total Balance Now')}:</td>
+            <td>${currencySymbol}${totalBalanceNow.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+          </tr>
+          ` : ''}
+        </tbody>
+      </table>
     </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('invoiceDate'))}:</strong></span>
-      <span>${escapeHtml(format(new Date(invoice.invoiceDate), 'PPpp'))}</span>
-    </div>
-    ${invoice.dueDate ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('dueDate'))}:</strong></span>
-      <span>${escapeHtml(format(new Date(invoice.dueDate), 'PPpp'))}</span>
-    </div>
-    ` : ''}
-    ${invoice.paidAt ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('paidAt'))}:</strong></span>
-      <span>${escapeHtml(format(new Date(invoice.paidAt), 'PPpp'))}</span>
-    </div>
-    ` : ''}
-    ${invoice.sale?.paymentMethod ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('paymentMethod'))}:</strong></span>
-      <span>${escapeHtml(getPaymentMethodLabel(invoice.sale.paymentMethod))}</span>
-    </div>
-    ` : ''}
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('status'))}:</strong></span>
-      <span>${escapeHtml(getStatusLabel(invoice.status))}</span>
-    </div>
-  </div>
-
-  <h2 style="font-size: 12pt; margin-top: 20px; margin-bottom: 10px;">${escapeHtml(t('financialSummary'))}</h2>
-  <div class="info-section">
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('subtotal'))} (${currencyLabel}):</strong></span>
-      <span>${currencySymbol}${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    ${invoice.discount > 0 ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('discount'))}:</strong></span>
-      <span>-${currencySymbol}${invoice.discount.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    ` : ''}
-    ${invoice.taxAmount > 0 ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('tax'))}:</strong></span>
-      <span>${currencySymbol}${invoice.taxAmount.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    ` : ''}
-    <div class="info-row" style="border-top: 1px solid #ddd; padding-top: 8px; font-weight: bold;">
-      <span><strong>${escapeHtml(t('total'))} (${currencyLabel}):</strong></span>
-      <span>${currencySymbol}${invoice.total.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('amountPaid'))}:</strong></span>
-      <span>${currencySymbol}${invoice.amountPaid.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('amountDue'))}:</strong></span>
-      <span>${currencySymbol}${invoice.amountDue.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-  </div>
-
-  <h2 style="font-size: 12pt; margin-top: 20px; margin-bottom: 10px;">${escapeHtml(t('invoiceItems'))}</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>${escapeHtml((() => {
-          try {
-            const translation = t('image')
-            // Check if translation is valid (not the key path)
-            if (translation && !translation.includes('navigation.invoiceDetail') && !translation.includes('image')) {
-              return translation
-            }
-          } catch (e) {
-            // Ignore error
-          }
-          // Fallback based on locale
-          return locale === 'ku' ? 'وێنە' : locale === 'ar' ? 'صورة' : 'Image'
-        })())}</th>
-        <th>${escapeHtml(t('brandName') || 'Brand/Product Name')}</th>
-        <th>${escapeHtml(t('sku') || 'SKU')}</th>
-        <th class="text-right">${escapeHtml(t('quantity'))}</th>
-        <th class="text-right">${escapeHtml(t('unitPrice'))} (${currencyLabel})</th>
-        <th class="text-right">${escapeHtml(t('totalPrice'))} (${currencyLabel})</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${itemsWithImages.length > 0 ? itemsWithImages.map((item: any, index: number) => {
-        const isMotorcycleItem = item.notes?.toUpperCase().trim().startsWith('MOTORCYCLE:')
-        const isPaymentItem = item.notes?.toUpperCase().trim().startsWith('PAYMENT:')
-        
-        const imageCell = item.imageUrl 
-          ? `<td class="text-center" style="padding: 4px;"><img src="${item.imageUrl}" alt="${escapeHtml(item.brandOrProductName || '')}" style="max-width: 40px; max-height: 40px; object-fit: contain;" /></td>`
-          : `<td class="text-center" style="padding: 4px;">-</td>`
-        
-        const brandOrProductName = item.brandOrProductName || (isPaymentItem ? t('typePayment') : 'Unknown')
-        const skuCode = item.sku || '-'
-        
-        return `
-        <tr>
-          <td class="text-center">${index + 1}</td>
-          ${imageCell}
-          <td>${escapeHtml(brandOrProductName)}</td>
-          <td>${escapeHtml(skuCode)}</td>
-          <td class="text-right">${item.quantity}</td>
-          <td class="text-right">${currencySymbol}${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
-          <td class="text-right">${currencySymbol}${item.lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
-        </tr>
-      `
-      }).join('') : `
-        <tr>
-          <td colspan="7" class="text-center">${escapeHtml(t('noItems'))}</td>
-        </tr>
-      `}
-    </tbody>
-  </table>
-  
-  ${invoice.customer ? `
-  <h2 style="font-size: 12pt; margin-top: 20px; margin-bottom: 10px;">${escapeHtml(t('customerInformation'))}</h2>
-  <div class="info-section">
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('billTo'))}:</strong></span>
-      <span>${escapeHtml(invoice.customer.name)}</span>
-    </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('sku'))}:</strong></span>
-      <span>${escapeHtml(invoice.customer.sku)}</span>
-    </div>
-    ${invoice.customer.email ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('email'))}:</strong></span>
-      <span>${escapeHtml(invoice.customer.email)}</span>
-    </div>
-    ` : ''}
-    ${invoice.customer.phone ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('phone'))}:</strong></span>
-      <span>${escapeHtml(invoice.customer.phone)}</span>
-    </div>
-    ` : ''}
-  </div>
-  
-  <h2 style="font-size: 12pt; margin-top: 20px; margin-bottom: 10px;">${escapeHtml(t('balanceBeforeInvoice'))}</h2>
-  <div class="info-section">
-    ${!isMotorcycle ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('debtIqdBefore'))}:</strong></span>
-      <span>ع.د ${(invoice.customer.debtIqd - (invoice.total - invoice.amountPaid)).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    ` : ''}
-    ${isMotorcycle ? `
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('debtUsdBefore'))}:</strong></span>
-      <span>$${(invoice.customer.debtUsd - (invoice.total - invoice.amountPaid)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
-    ` : ''}
-    <div class="info-row" style="border-top: 1px solid #ddd; padding-top: 8px; font-weight: bold;">
-      <span><strong>${escapeHtml(t('amountPaidForInvoice'))}:</strong></span>
-      <span>${currencySymbol}${invoice.amountPaid.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</span>
-    </div>
-  </div>
-  
-  <h2 style="font-size: 12pt; margin-top: 20px; margin-bottom: 10px;">${escapeHtml(t('totalBalanceNow'))}</h2>
-  <div class="info-section">
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('debtIqdNow'))}:</strong></span>
-      <span>ع.د ${invoice.customer.debtIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="info-row">
-      <span><strong>${escapeHtml(t('debtUsdNow'))}:</strong></span>
-      <span>$${invoice.customer.debtUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
-  </div>
-  ` : ''}
-  
-  <div class="footer">
-    <p>${escapeHtml(t('invoiceInformation'))} - ${escapeHtml(invoice.invoiceNumber)}</p>
-    <p>${currentDate}</p>
-    <p style="margin-top: 10px; font-weight: bold;">${escapeHtml(t('thankYou'))}</p>
   </div>
   
   <script>
     window.onload = function() {
+      // Add print styles for page numbers
+      const style = document.createElement('style');
+      style.textContent = \`
+        @media print {
+          @page {
+            margin-bottom: 15mm;
+            @bottom-right-corner {
+              content: counter(page);
+              font-size: 9pt;
+              color: #666;
+              font-family: 'Kurdish', 'Arial Unicode MS', Arial, sans-serif;
+            }
+          }
+          body {
+            counter-reset: page 1;
+          }
+        }
+      \`;
+      document.head.appendChild(style);
+      
       setTimeout(function() {
         window.print();
-      }, 250);
+      }, 600);
     };
   </script>
 </body>
@@ -724,7 +982,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     printWindow.focus()
   }
 
-  // PDF generation function (same as in invoice-success-dialog)
+  // PDF generation function - simplified version
   const generateInvoicePDF = async (invoice: any, invoiceNumber: string) => {
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
@@ -760,101 +1018,100 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const currencySymbol = isMotorcycle ? '$' : 'ع.د '
     const currencyLabel = isMotorcycle ? 'USD' : 'ع.د'
 
-    // Header with logo
-    try {
-      const logoUrl = '/assets/logo/arbati.png'
-      const response = await fetch(logoUrl)
-      const blob = await response.blob()
-      const imgData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
-      })
-      doc.addImage(imgData, 'PNG', margin, margin, 40, 15)
-    } catch (error) {
-      console.warn('Could not load logo:', error)
-    }
+    // Extract 6-character code from invoice number
+    const invoiceParts = invoiceNumber.split('-')
+    const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoiceNumber.slice(-6)
 
-    startY = margin + 20
+    // Format date as MM/DD/YYYY HH:MM AM/PM
+    const invoiceDate = new Date(invoice.invoiceDate)
+    const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
+    const day = String(invoiceDate.getDate()).padStart(2, '0')
+    const year = invoiceDate.getFullYear()
+    const hours = invoiceDate.getHours()
+    const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    const displayHours = hours % 12 || 12
+    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
 
-    // Invoice Title
-    doc.setFontSize(20)
-    doc.setFont('helvetica', 'bold')
-    doc.text('INVOICE', pageWidth / 2, startY, { align: 'center' })
-    startY += 10
-
-    // Invoice Number
-    doc.setFontSize(14)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Invoice Number: ${invoiceNumber}`, pageWidth / 2, startY, { align: 'center' })
-    startY += 8
-
-    // Date
-    const invoiceDate = invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'PP') : format(new Date(), 'PP')
-    doc.setFontSize(10)
-    doc.text(`Date: ${invoiceDate}`, pageWidth / 2, startY, { align: 'center' })
-    startY += 15
-
-    // Customer and Invoice Details (side by side)
-    const leftX = margin
-    const rightX = pageWidth - margin - 60
-
-    // Customer Details - Show for both database customers and retail customers (from invoice number)
-    // Extract customer name from invoice number for retail invoices (format: customerName-YYYY-MM-DD-RANDOMCODE)
-    let customerName = invoice.customer?.name || null
-    let customerSku = invoice.customer?.sku || null
+    // Get customer name and address
+    let customerName = 'Unknown'
+    let customerAddress = ''
     
-    // If no customer in database, try to extract from invoice number (for retail)
-    if (!customerName && invoiceNumber) {
+    if (invoice.customer) {
+      customerName = invoice.customer.name || 'Unknown'
+      // Try to get address from customer - fetch full customer data if needed
+      try {
+        const customerResponse = await fetch(`/api/customers/${invoice.customer.id}`)
+        if (customerResponse.ok) {
+          const customerData = await customerResponse.json()
+          // Handle address - it can be an object with { id, name } or a string
+          const addr = customerData.address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = customerData.phone || customerData.email || invoice.customer.phone || invoice.customer.email || ''
+          }
+        } else {
+          const addr = (invoice.customer as any).address
+          if (addr) {
+            customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+              ? addr.name 
+              : (typeof addr === 'string' ? addr : '')
+          }
+          if (!customerAddress) {
+            customerAddress = invoice.customer.phone || invoice.customer.email || ''
+          }
+        }
+      } catch (error) {
+        const addr = (invoice.customer as any).address
+        if (addr) {
+          customerAddress = typeof addr === 'object' && addr !== null && addr.name 
+            ? addr.name 
+            : (typeof addr === 'string' ? addr : '')
+        }
+        if (!customerAddress) {
+          customerAddress = invoice.customer.phone || invoice.customer.email || ''
+        }
+      }
+    } else {
+      // Extract customer name from invoice number for retail invoices
       const parts = invoiceNumber.split('-')
-      // Find the first part that looks like a year (4 digits starting with 19 or 20)
       const yearIndex = parts.findIndex(part => /^(19|20)\d{2}$/.test(part))
       if (yearIndex > 0) {
-        // Take all parts before the year
         customerName = parts.slice(0, yearIndex).join('-')
       }
     }
-    
-    // Always show "Bill To:" section
-    doc.setFontSize(12)
+
+    // Header: Customer Name, Address, Date, Invoice Code
+    doc.setFontSize(11)
     doc.setFont('helvetica', 'bold')
-    doc.text('Bill To:', leftX, startY)
-    doc.setFontSize(10)
+    doc.text(`${t('customer') || 'Customer'}:`, margin, startY)
     doc.setFont('helvetica', 'normal')
+    doc.text(customerName, margin + 30, startY)
     startY += 6
-    doc.text(customerName || 'Unknown', leftX, startY)
     
-    if (customerSku) {
-      startY += 5
-      doc.text(`SKU: ${customerSku}`, leftX, startY)
+    if (customerAddress) {
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('address') || 'Address'}:`, margin, startY)
+      doc.setFont('helvetica', 'normal')
+      doc.text(customerAddress, margin + 30, startY)
+      startY += 6
     }
     
-    if (invoice.customer?.phone) {
-      startY += 5
-      doc.text(`Phone: ${invoice.customer.phone}`, leftX, startY)
-    }
-
-    // Invoice Details (right side)
-    let rightY = startY - (customerName ? 20 : 0)
-    doc.setFontSize(12)
     doc.setFont('helvetica', 'bold')
-    doc.text('Invoice Details:', rightX, rightY)
-    doc.setFontSize(10)
+    doc.text(`${t('invoiceDate') || 'Date'}:`, margin, startY)
     doc.setFont('helvetica', 'normal')
-    rightY += 6
-    doc.text(`${t('status')}: ${getStatusLabel(invoice.status)}`, rightX, rightY)
-    rightY += 5
-    if (invoice.sale?.paymentMethod) {
-      doc.text(`${t('paymentMethod')}: ${getPaymentMethodLabel(invoice.sale.paymentMethod)}`, rightX, rightY)
-      rightY += 5
-    }
-    if (invoice.dueDate) {
-      doc.text(`${t('dueDate')}: ${format(new Date(invoice.dueDate), 'PP')}`, rightX, rightY)
-      rightY += 5
-    }
-
-    startY = Math.max(startY, rightY) + 15
+    doc.text(formattedDate, margin + 30, startY)
+    startY += 6
+    
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${t('invoiceNumber') || 'Invoice'}:`, margin, startY)
+    doc.setFont('helvetica', 'normal')
+    doc.text(invoiceCode, margin + 30, startY)
+    startY += 15
 
     // Items Table - use invoice.items or fallback to sale.items
     let invoiceItems: any[] = []
@@ -864,48 +1121,44 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       invoiceItems = invoice.sale.items
     }
     
-    // Fetch motorcycle names and images if needed
-    const tableData = await Promise.all(invoiceItems.map(async (item: any, index: number) => {
-      // Get item name - check product first, then notes for motorcycle
+    // Fetch item details with images
+    const tableDataWithImages = await Promise.all(invoiceItems.map(async (item: any, index: number) => {
       let itemName = 'N/A'
+      let itemSku: string | null = null
       let imageUrl: string | null = null
       
-      if (item.product?.name) {
-        itemName = item.product.name
-        if (item.product.image) {
-          imageUrl = item.product.image
-        }
-      } else if (item.notes) {
-        // For motorcycles, extract from notes: MOTORCYCLE:id
-        if (item.notes.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
-          const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
-          if (motorcycleId) {
-            try {
-              // Try to fetch motorcycle name and image
-              const motoResponse = await fetch(`/api/motorcycles/${motorcycleId}`)
-              if (motoResponse.ok) {
-                const motoData = await motoResponse.json()
-                if (motoData.motorcycle) {
-                  itemName = `${motoData.motorcycle.brand} ${motoData.motorcycle.model}`
-                  if (motoData.motorcycle.image) {
-                    imageUrl = motoData.motorcycle.image
-                  }
-                } else {
-                  itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
-                }
+      if (item.product) {
+        itemName = item.product.name || 'Unknown Product'
+        itemSku = item.product.sku || null
+        imageUrl = item.product.image || null
+      } else if (item.notes?.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
+        const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
+        if (motorcycleId) {
+          try {
+            const motoResponse = await fetch(`/api/motorcycles/${motorcycleId}`)
+            if (motoResponse.ok) {
+              const motoData = await motoResponse.json()
+              if (motoData.motorcycle) {
+                itemName = `${motoData.motorcycle.brand || ''} ${motoData.motorcycle.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemSku = motoData.motorcycle.sku || motorcycleId
+                imageUrl = motoData.motorcycle.image || null
               } else {
                 itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemSku = motorcycleId
               }
-            } catch (error) {
-              console.warn('Error fetching motorcycle for PDF:', error)
+            } else {
               itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+              itemSku = motorcycleId
             }
-          } else {
-            itemName = 'Motorcycle'
+          } catch (error) {
+            console.warn('Error fetching motorcycle for PDF:', error)
+            itemName = `Motorcycle ${motorcycleId.slice(0, 8)}`
+            itemSku = motorcycleId
           }
-        } else {
-          itemName = item.notes
         }
+      } else if (item.notes?.toUpperCase().trim().startsWith('PAYMENT:')) {
+        itemName = t('typePayment')
+        itemSku = 'PAYMENT'
       }
       
       const quantity = Number(item.quantity) || 0
@@ -914,18 +1167,19 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       
       return {
         row: [
-          (index + 1).toString(), // Item number: 1, 2, 3, etc.
+          (index + 1).toString(),
           itemName,
+          itemSku || '-',
           quantity.toString(),
-          `${currencySymbol}${unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-          `${currencySymbol}${lineTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          `${currencySymbol}${unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`,
+          `${currencySymbol}${lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`
         ],
         imageUrl
       }
     }))
     
     // Load images as base64 and add to table rows
-    const finalTableData = await Promise.all(tableData.map(async (item: any) => {
+    const tableData = await Promise.all(tableDataWithImages.map(async (item: any) => {
       const row = [...item.row]
       
       // Try to load image if available
@@ -940,10 +1194,9 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
               reader.onerror = reject
               reader.readAsDataURL(blob)
             })
-            // Insert image as data URL at the beginning of the row (after item number)
+            // Insert image as data URL at position 1 (after item number)
             row.splice(1, 0, { content: base64, rowSpan: 1 } as any)
           } else {
-            // Insert empty cell if image fails to load
             row.splice(1, 0, '')
           }
         } catch (error) {
@@ -951,19 +1204,27 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
           row.splice(1, 0, '')
         }
       } else {
-        // Insert empty cell if no image
         row.splice(1, 0, '')
       }
       
       return row
     }))
     
-    if (finalTableData.length === 0) {
-      console.warn('No items found for PDF generation')
-      // Add a placeholder row if no items
-      finalTableData.push(['1', '', 'No items', '0', `${currencySymbol}0.00`, `${currencySymbol}0.00`])
+    if (tableData.length === 0) {
+      tableData.push(['1', '', 'No items', '-', '0', `${currencySymbol}0.00`, `${currencySymbol}0.00`])
     }
 
+    // Calculate previous balance and total balance now
+    const currentDebt = invoice.customer 
+      ? (isMotorcycle 
+          ? (invoice.customer.debtUsd || 0)
+          : (invoice.customer.debtIqd || 0))
+      : 0
+    const amountDue = Number(invoice.amountDue || 0)
+    const previousBalance = invoice.customer ? (currentDebt - amountDue) : 0
+    const totalBalanceNow = currentDebt
+
+    // Items table with autoTable (with images, proper page breaks)
     // Build table with images - custom rendering to include images
     const imageColumnWidth = 20
     const itemStartY = startY
@@ -977,32 +1238,36 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     let headerY = itemStartY
     
     // Header row
-    doc.rect(headerX, headerY - 6, 15, 7, 'F')
-    doc.text('No', headerX + 7.5, headerY - 2, { align: 'center' })
-    headerX += 15
+    doc.rect(headerX, headerY - 6, 10, 7, 'F')
+    doc.text('#', headerX + 5, headerY - 2, { align: 'center' })
+    headerX += 10
     
     doc.rect(headerX, headerY - 6, imageColumnWidth, 7, 'F')
     doc.text('Image', headerX + imageColumnWidth / 2, headerY - 2, { align: 'center' })
     headerX += imageColumnWidth
     
-    const itemNameWidth = pageWidth - margin * 2 - 15 - imageColumnWidth - 25 - 40 - 40
+    const itemNameWidth = pageWidth - margin * 2 - 10 - imageColumnWidth - 25 - 35 - 35
     doc.rect(headerX, headerY - 6, itemNameWidth, 7, 'F')
-    doc.text('Item', headerX + itemNameWidth / 2, headerY - 2, { align: 'center' })
+    doc.text(t('brandName') || 'Product Name', headerX + itemNameWidth / 2, headerY - 2, { align: 'center' })
     headerX += itemNameWidth
     
     doc.rect(headerX, headerY - 6, 25, 7, 'F')
-    doc.text('Qty', headerX + 12.5, headerY - 2, { align: 'center' })
+    doc.text(t('sku') || 'Code', headerX + 12.5, headerY - 2, { align: 'center' })
     headerX += 25
     
-    doc.rect(headerX, headerY - 6, 40, 7, 'F')
-    doc.text(`Unit Price (${currencyLabel})`, headerX + 20, headerY - 2, { align: 'center' })
-    headerX += 40
+    doc.rect(headerX, headerY - 6, 20, 7, 'F')
+    doc.text(t('quantity') || 'Qty', headerX + 10, headerY - 2, { align: 'center' })
+    headerX += 20
     
-    doc.rect(headerX, headerY - 6, 40, 7, 'F')
-    doc.text(`Total (${currencyLabel})`, headerX + 20, headerY - 2, { align: 'center' })
+    doc.rect(headerX, headerY - 6, 35, 7, 'F')
+    doc.text(`Unit Price (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+    headerX += 35
+    
+    doc.rect(headerX, headerY - 6, 35, 7, 'F')
+    doc.text(`Total (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
     
     let currentY = itemStartY + 1
-    const rowHeight = 15
+    const rowHeight = 20
     
     // Draw data rows
     doc.setFillColor(255, 255, 255)
@@ -1010,9 +1275,9 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     doc.setFontSize(8)
     doc.setFont('helvetica', 'normal')
     
-    for (let i = 0; i < finalTableData.length; i++) {
-      const row = finalTableData[i]
-      const itemData = tableData[i]
+    for (let i = 0; i < tableData.length; i++) {
+      const row = tableData[i]
+      const itemData = tableDataWithImages[i]
       
       // Alternate row color
       if (i % 2 === 1) {
@@ -1021,27 +1286,61 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         doc.setFillColor(255, 255, 255)
       }
       
+      // Check if we need a new page
+      if (currentY > pageHeight - margin - 50) {
+        doc.addPage()
+        currentY = margin
+        // Redraw header on new page
+        headerX = margin
+        headerY = currentY
+        doc.setFillColor(66, 66, 66)
+        doc.setTextColor(255, 255, 255)
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.rect(headerX, headerY - 6, 10, 7, 'F')
+        doc.text('#', headerX + 5, headerY - 2, { align: 'center' })
+        headerX += 10
+        doc.rect(headerX, headerY - 6, imageColumnWidth, 7, 'F')
+        doc.text('Image', headerX + imageColumnWidth / 2, headerY - 2, { align: 'center' })
+        headerX += imageColumnWidth
+        doc.rect(headerX, headerY - 6, itemNameWidth, 7, 'F')
+        doc.text(t('brandName') || 'Product Name', headerX + itemNameWidth / 2, headerY - 2, { align: 'center' })
+        headerX += itemNameWidth
+        doc.rect(headerX, headerY - 6, 25, 7, 'F')
+        doc.text(t('sku') || 'Code', headerX + 12.5, headerY - 2, { align: 'center' })
+        headerX += 25
+        doc.rect(headerX, headerY - 6, 20, 7, 'F')
+        doc.text(t('quantity') || 'Qty', headerX + 10, headerY - 2, { align: 'center' })
+        headerX += 20
+        doc.rect(headerX, headerY - 6, 35, 7, 'F')
+        doc.text(`Unit Price (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+        headerX += 35
+        doc.rect(headerX, headerY - 6, 35, 7, 'F')
+        doc.text(`Total (${currencyLabel})`, headerX + 17.5, headerY - 2, { align: 'center' })
+        currentY = headerY + 1
+        doc.setFillColor(255, 255, 255)
+        doc.setTextColor(0, 0, 0)
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'normal')
+      }
+      
       let cellX = margin
       let cellY = currentY
       
       // No column
-      doc.rect(cellX, cellY, 15, rowHeight, 'FD')
-      doc.text(String(row[0]), cellX + 7.5, cellY + rowHeight / 2 + 2, { align: 'center' })
-      cellX += 15
+      doc.rect(cellX, cellY, 10, rowHeight, 'FD')
+      doc.text(String(row[0]), cellX + 5, cellY + rowHeight / 2 + 2, { align: 'center' })
+      cellX += 10
       
       // Image column
       doc.rect(cellX, cellY, imageColumnWidth, rowHeight, 'FD')
-      if (itemData?.imageUrl && typeof row[1] === 'string' && row[1].startsWith('data:')) {
+      if (itemData?.imageUrl && typeof row[1] === 'object' && row[1].content) {
         try {
-          // Extract base64 data
-          const base64Data = row[1].split(',')[1]
-          const imageFormat = row[1].split(';')[0].split('/')[1]
+          const base64Data = row[1].content.split(',')[1]
+          const imageFormat = row[1].content.split(';')[0].split('/')[1]
           const format = imageFormat === 'png' ? 'PNG' : 'JPEG'
-          
-          // Calculate image size (fit within cell)
           const maxWidth = imageColumnWidth - 2
           const maxHeight = rowHeight - 2
-          
           doc.addImage(base64Data, format, cellX + 1, cellY + 1, maxWidth, maxHeight, undefined, 'FAST')
         } catch (error) {
           console.warn('Error adding image to PDF:', error)
@@ -1054,115 +1353,80 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       doc.text(String(row[2] || row[1]), cellX + 2, cellY + rowHeight / 2 + 2, { maxWidth: itemNameWidth - 4 })
       cellX += itemNameWidth
       
-      // Quantity
+      // SKU/Code
       doc.rect(cellX, cellY, 25, rowHeight, 'FD')
       doc.text(String(row[3] || row[2]), cellX + 12.5, cellY + rowHeight / 2 + 2, { align: 'center' })
       cellX += 25
       
+      // Quantity
+      doc.rect(cellX, cellY, 20, rowHeight, 'FD')
+      doc.text(String(row[4] || row[3]), cellX + 10, cellY + rowHeight / 2 + 2, { align: 'center' })
+      cellX += 20
+      
       // Unit Price
-      doc.rect(cellX, cellY, 40, rowHeight, 'FD')
-      doc.text(String(row[4] || row[3]), cellX + 38, cellY + rowHeight / 2 + 2, { align: 'right' })
-      cellX += 40
+      doc.rect(cellX, cellY, 35, rowHeight, 'FD')
+      doc.text(String(row[5] || row[4]), cellX + 33, cellY + rowHeight / 2 + 2, { align: 'right' })
+      cellX += 35
       
       // Total
-      doc.rect(cellX, cellY, 40, rowHeight, 'FD')
-      doc.text(String(row[5] || row[4]), cellX + 38, cellY + rowHeight / 2 + 2, { align: 'right' })
+      doc.rect(cellX, cellY, 35, rowHeight, 'FD')
+      doc.text(String(row[6] || row[5]), cellX + 33, cellY + rowHeight / 2 + 2, { align: 'right' })
       
       currentY += rowHeight
+    }
+    
+    const finalY = currentY + 10
+
+    // Footer table: Total of This Invoice, Amount Paid, Previous Balance, Total Balance Now
+    const footerTableY = finalY + 10
+    const footerTableWidth = pageWidth - margin * 2
+    
+    // Draw footer table
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'normal')
+    
+    // Total of This Invoice row
+    doc.setFillColor(245, 245, 245)
+    doc.rect(margin, footerTableY, footerTableWidth, 8, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${t('totalOfThisInvoice') || t('subtotal') || 'Total of This Invoice'} (${currencyLabel}):`, margin + 5, footerTableY + 5.5)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${currencySymbol}${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, footerTableY + 5.5, { align: 'right' })
+    
+    let nextRowY = footerTableY + 8
+    
+    // Amount Paid row (always show, even if 0)
+    doc.setFillColor(255, 255, 255)
+    doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.text(`${t('amountPaid') || 'Amount Paid'}:`, margin + 5, nextRowY + 5.5)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${currencySymbol}${(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
+    nextRowY += 8
+    
+    if (invoice.customer) {
+      // Previous Balance row
+      doc.setFillColor(255, 255, 255)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('balanceBeforeInvoice') || 'Previous Balance'}:`, margin + 5, nextRowY + 5.5)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`${currencySymbol}${previousBalance.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
+      nextRowY += 8
       
-      // Check if we need a new page
-      if (currentY > pageHeight - margin - 30) {
-        doc.addPage()
-        currentY = margin
-      }
+      // Total Balance Now row (bold border)
+      doc.setFillColor(245, 245, 245)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'FD')
+      doc.setDrawColor(0, 0, 0)
+      doc.setLineWidth(0.5)
+      doc.rect(margin, nextRowY, footerTableWidth, 8, 'D')
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${t('totalBalanceNow') || 'Total Balance Now'}:`, margin + 5, nextRowY + 5.5)
+      doc.text(`${currencySymbol}${totalBalanceNow.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}`, pageWidth - margin - 5, nextRowY + 5.5, { align: 'right' })
     }
-    
-    startY = currentY + 10
-
-    const finalY = (doc as any).lastAutoTable.finalY || startY + 50
-
-    // Customer Balance Information
-    let balanceY = finalY + 10
-    const balanceX = pageWidth - margin - 60
-    
-    // Calculate balance before this invoice
-    // For retail invoices without customers, balance is always 0
-    // Current debt includes this invoice's amountDue, so subtract it to get balance before
-    const currentDebt = invoice.customer 
-      ? (isMotorcycle 
-          ? (invoice.customer.debtUsd || 0)
-          : (invoice.customer.debtIqd || 0))
-      : 0 // Retail invoices without customers have no debt
-    const amountDue = Number(invoice.amountDue || 0)
-    const balanceBefore = invoice.customer ? (currentDebt - amountDue) : 0
-    
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Customer Balance Information:', balanceX, balanceY, { align: 'right' })
-    balanceY += 8
-    
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text('Balance Before This Invoice:', balanceX, balanceY, { align: 'right' })
-    doc.text(`${currencySymbol}${balanceBefore.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, balanceY, { align: 'right' })
-    balanceY += 10
-
-    // Totals
-    let totalsY = balanceY
-    const totalsX = pageWidth - margin - 60
-
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Invoice Summary:', totalsX, totalsY, { align: 'right' })
-    totalsY += 8
-
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text('Subtotal:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${Number(invoice.subtotal || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-    totalsY += 6
-
-    if (invoice.discount && Number(invoice.discount) > 0) {
-      doc.text('Discount:', totalsX, totalsY, { align: 'right' })
-      doc.text(`${currencySymbol}${Number(invoice.discount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-      totalsY += 6
-    }
-
-    if (invoice.taxAmount && Number(invoice.taxAmount) > 0) {
-      doc.text('Tax:', totalsX, totalsY, { align: 'right' })
-      doc.text(`${currencySymbol}${Number(invoice.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-      totalsY += 6
-    }
-
-    totalsY += 3
-    doc.setFontSize(12)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Total:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${Number(invoice.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-    totalsY += 8
-
-    doc.setFontSize(10)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Amount Paid: ${currencySymbol}${Number(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, totalsX, totalsY, { align: 'right' })
-    totalsY += 6
-    doc.text(`Amount Due: ${currencySymbol}${Number(invoice.amountDue || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, totalsX, totalsY, { align: 'right' })
-    totalsY += 10
-
-    // Total Balance Now
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Total Balance Now:', totalsX, totalsY, { align: 'right' })
-    doc.text(`${currencySymbol}${currentDebt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - margin, totalsY, { align: 'right' })
-
-    // Footer
-    const footerY = pageHeight - margin
-    doc.setFontSize(8)
-    doc.setTextColor(100, 100, 100)
-    doc.text('Thank you for your business!', pageWidth / 2, footerY, { align: 'center' })
-    doc.setTextColor(0, 0, 0)
 
     // Save PDF
-    doc.save(`invoice-${invoiceNumber}-${new Date().getTime()}.pdf`)
+    doc.save(`invoice-${invoiceCode}-${new Date().getTime()}.pdf`)
   }
 
   const initials = invoice.invoiceNumber.slice(0, 2).toUpperCase()
@@ -1558,7 +1822,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className={cn("text-sm font-medium", fontClass)}>
-                            Invoice Created
+                            {t('invoiceCreated')}
                           </p>
                           <p className={cn("text-xs text-muted-foreground", fontClass)}>
                             {format(new Date(invoice.createdAt), 'PPp')}
