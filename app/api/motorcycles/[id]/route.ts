@@ -98,6 +98,17 @@ export async function PUT(
         { status: 400 }
       )
     }
+    
+    const finalSku = sku.trim()
+    
+    // Validate SKU format: must be exactly 6 alphanumeric characters (A-Z, 0-9)
+    if (!/^[A-Z0-9]{6}$/.test(finalSku)) {
+      return NextResponse.json(
+        { error: 'SKU must be exactly 6 alphanumeric characters (letters A-Z and numbers 0-9)' },
+        { status: 400 }
+      )
+    }
+    
     if (!usdRetailPrice || parseFloat(usdRetailPrice) <= 0) {
       return NextResponse.json(
         { error: 'USD Retail price must be greater than 0' },
@@ -123,26 +134,18 @@ export async function PUT(
       )
     }
 
-    // Check if SKU already exists in products or motorcycles (excluding current)
-    if (sku.trim() !== currentMotorcycle.sku) {
+    // Check if SKU already exists in products or motorcycles (excluding current motorcycle)
+    if (finalSku !== currentMotorcycle.sku) {
       const existingProduct = await prisma.product.findUnique({
-        where: { sku: sku.trim() },
+        where: { sku: finalSku },
       })
-
-      if (existingProduct) {
-        return NextResponse.json(
-          { error: 'SKU already exists in products' },
-          { status: 400 }
-        )
-      }
-
       const existingMotorcycle = await prisma.motorcycle.findUnique({
-        where: { sku: sku.trim() },
+        where: { sku: finalSku },
       })
 
-      if (existingMotorcycle) {
+      if (existingProduct || existingMotorcycle) {
         return NextResponse.json(
-          { error: 'SKU already exists in motorcycles' },
+          { error: 'SKU already exists in products or motorcycles' },
           { status: 400 }
         )
       }
@@ -209,8 +212,7 @@ export async function PUT(
         }
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -232,8 +234,7 @@ export async function PUT(
         await mkdir(attachmentsDir, { recursive: true })
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -323,7 +324,7 @@ export async function PUT(
     const updateData: any = {
       brand: brand.trim(),
       model: model.trim(),
-      sku: sku.trim(),
+      sku: finalSku,
       year: year ? parseInt(year) : null,
       engineSize: engineSize?.trim() || null,
       vin: vin?.trim() || null,

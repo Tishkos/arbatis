@@ -139,6 +139,15 @@ export async function PUT(
         { status: 400 }
       )
     }
+    
+    // Validate SKU is numeric and in range 1000-9999
+    const skuNum = parseInt(sku.trim())
+    if (isNaN(skuNum) || skuNum < 1000 || skuNum > 9999) {
+      return NextResponse.json(
+        { error: 'Customer code must be a number between 1000 and 9999' },
+        { status: 400 }
+      )
+    }
 
     // Get current customer
     const currentCustomer = await prisma.customer.findUnique({

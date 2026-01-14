@@ -180,6 +180,14 @@ export async function POST(request: NextRequest) {
         )
       }
     } else {
+      // Validate user-provided SKU format: must be exactly 6 alphanumeric characters (A-Z, 0-9)
+      if (!/^[A-Z0-9]{6}$/.test(finalSku)) {
+        return NextResponse.json(
+          { error: 'SKU must be exactly 6 alphanumeric characters (letters A-Z and numbers 0-9)' },
+          { status: 400 }
+        )
+      }
+      
       // Check if user-provided SKU already exists
       const existingProduct = await prisma.product.findUnique({
         where: { sku: finalSku },
@@ -189,11 +197,11 @@ export async function POST(request: NextRequest) {
       })
 
       if (existingProduct || existingMotorcycle) {
-      return NextResponse.json(
+        return NextResponse.json(
           { error: 'SKU already exists in products or motorcycles' },
-        { status: 400 }
-      )
-    }
+          { status: 400 }
+        )
+      }
     }
     
     if (!usdRetailPrice || parseFloat(usdRetailPrice) <= 0) {

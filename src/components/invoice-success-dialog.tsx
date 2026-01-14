@@ -105,7 +105,7 @@ export function InvoiceSuccessDialog({
     const invoiceParts = invoiceNumber.split('-')
     const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoiceNumber.slice(-6)
 
-    // Format date as MM/DD/YYYY HH:MM AM/PM
+    // Format date as DD/MM/YYYY HH:MM AM/PM
     const invoiceDate = new Date(invoice.invoiceDate)
     const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
     const day = String(invoiceDate.getDate()).padStart(2, '0')
@@ -114,7 +114,7 @@ export function InvoiceSuccessDialog({
     const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
     const ampm = hours >= 12 ? 'PM' : 'AM'
     const displayHours = hours % 12 || 12
-    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
+    const formattedDate = `${day}/${month}/${year} ${displayHours}:${minutes} ${ampm}`
 
     // Get customer name and address
     let customerName = 'Unknown'

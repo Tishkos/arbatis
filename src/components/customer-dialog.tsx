@@ -246,13 +246,20 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
         setIsLoading(false)
         return
       }
+      
+      // Validate SKU is numeric and in range 1000-9999
+      const skuNum = parseInt(sku.trim())
+      if (isNaN(skuNum) || skuNum < 1000 || skuNum > 9999) {
+        setError('Customer code must be a number between 1000 and 9999')
+        setIsLoading(false)
+        return
+      }
 
       const formData = new FormData()
       formData.append('name', name.trim())
       formData.append('sku', sku.trim())
       formData.append('type', 'INDIVIDUAL') // Always INDIVIDUAL
       if (phone) formData.append('phone', phone.trim())
-      if (email) formData.append('email', email.trim())
       if (addressId && !showNewAddress) {
         formData.append('addressId', addressId)
       }
@@ -440,10 +447,18 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
                     <div className="flex gap-2">
                     <Input
                       id="sku"
+                      type="text"
+                      inputMode="numeric"
                       value={sku}
-                      onChange={(e) => setSku(e.target.value)}
-                      placeholder={t('dialog.codePlaceholder')}
+                      onChange={(e) => {
+                        const value = e.target.value.replace(/\D/g, '') // Remove non-numeric characters
+                        if (value === '' || (parseInt(value) >= 1000 && parseInt(value) <= 9999)) {
+                          setSku(value)
+                        }
+                      }}
+                      placeholder="1000-9999"
                       className={fontClass}
+                      maxLength={4}
                     />
                       {!isEditMode && (
                         <Button
@@ -468,18 +483,6 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder={t('dialog.phonePlaceholder')}
-                    className={fontClass}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="email" className={fontClass}>{t('dialog.email')}</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder={t('dialog.emailPlaceholder')}
                     className={fontClass}
                   />
                 </div>

@@ -7,6 +7,53 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { logActivity, createActivityDescription, getChanges } from '@/lib/activity-logger'
 
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions)
+
+    if (!session?.user?.email) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    const { id } = await params
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            nameAr: true,
+            nameKu: true,
+          },
+        },
+      },
+    })
+
+    if (!product) {
+      return NextResponse.json(
+        { error: 'Product not found' },
+        { status: 404 }
+      )
+    }
+
+    return NextResponse.json({ product })
+  } catch (error) {
+    console.error('Error fetching product:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch product' },
+      { status: 500 }
+    )
+  }
+}
+
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -50,6 +97,17 @@ export async function PUT(
         { status: 400 }
       )
     }
+    
+    const finalSku = sku.trim()
+    
+    // Validate SKU format: must be exactly 6 alphanumeric characters (A-Z, 0-9)
+    if (!/^[A-Z0-9]{6}$/.test(finalSku)) {
+      return NextResponse.json(
+        { error: 'SKU must be exactly 6 alphanumeric characters (letters A-Z and numbers 0-9)' },
+        { status: 400 }
+      )
+    }
+    
     if (!mufradPrice || parseFloat(mufradPrice) <= 0) {
       return NextResponse.json(
         { error: 'Retail price must be greater than 0' },
@@ -75,15 +133,18 @@ export async function PUT(
       )
     }
 
-    // Check if SKU already exists for another product
-    if (sku.trim() !== currentProduct.sku) {
+    // Check if SKU already exists in products or motorcycles (excluding current product)
+    if (finalSku !== currentProduct.sku) {
       const existingProduct = await prisma.product.findUnique({
-        where: { sku: sku.trim() },
+        where: { sku: finalSku },
+      })
+      const existingMotorcycle = await prisma.motorcycle.findUnique({
+        where: { sku: finalSku },
       })
 
-      if (existingProduct) {
+      if (existingProduct || existingMotorcycle) {
         return NextResponse.json(
-          { error: 'SKU already exists' },
+          { error: 'SKU already exists in products or motorcycles' },
           { status: 400 }
         )
       }
@@ -204,8 +265,7 @@ export async function PUT(
         }
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -227,8 +287,7 @@ export async function PUT(
         await mkdir(attachmentsDir, { recursive: true })
       }
 
-      const sanitizedSku = sku
-        .trim()
+      const sanitizedSku = finalSku
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '_')
         .replace(/_+/g, '_')
@@ -291,7 +350,7 @@ export async function PUT(
     // Prepare update data
     const updateData: any = {
       name: name.trim(),
-      sku: sku.trim(),
+      sku: finalSku,
       mufradPrice: parseFloat(mufradPrice),
       jumlaPrice: parseFloat(jumlaPrice),
       rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,

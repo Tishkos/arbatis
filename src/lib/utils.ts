@@ -83,15 +83,25 @@ export function hasPermission(
 }
 
 /**
- * Generate random 6-character alphanumeric SKU code
- * Uses uppercase letters and numbers (A-Z, 0-9)
+ * Generate random 4-digit customer code (1000-9999)
  */
 export function generateSkuCode(): string {
+  // Generate a random number between 1000 and 9999
+  const min = 1000;
+  const max = 9999;
+  const code = Math.floor(Math.random() * (max - min + 1)) + min;
+  return code.toString();
+}
+
+/**
+ * Generate random 6-character alphanumeric code for products/motorcycles (A-Z, 0-9)
+ */
+export function generateProductSkuCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
+  let code = '';
   for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return result;
+  return code;
 }
 

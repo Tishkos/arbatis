@@ -65,10 +65,13 @@ export class SaleService {
         });
         
         if (customer) {
-          // Generate series: customerName-YYYY-MM-DD-RANDOMCODE
+          // Generate series: customerName-YYYY-MM-DD-RANDOMCODE (6-digit numeric)
           const now = new Date();
           const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
-          const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+          const min = 100000;
+          const max = 999999;
+          const code = Math.floor(Math.random() * (max - min + 1)) + min;
+          const randomCode = code.toString();
           invoiceNumber = `${customer.name}-${dateStr}-${randomCode}`;
         }
       }
@@ -77,7 +80,10 @@ export class SaleService {
       if (!invoiceNumber) {
         const now = new Date();
         const dateStr = now.toISOString().split('T')[0];
-        const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const min = 100000;
+        const max = 999999;
+        const code = Math.floor(Math.random() * (max - min + 1)) + min;
+        const randomCode = code.toString();
         invoiceNumber = `INVOICE-${dateStr}-${randomCode}`;
       }
       // Create Sale
@@ -375,11 +381,16 @@ export class SaleService {
 
   /**
    * Generate a unique invoice number (fallback if not provided)
+   * Uses 6-digit numeric code (100000-999999)
    */
   private generateInvoiceNumber(): string {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `INV-${timestamp}-${random}`;
+    const min = 100000;
+    const max = 999999;
+    const code = Math.floor(Math.random() * (max - min + 1)) + min;
+    const randomCode = code.toString();
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    return `INV-${dateStr}-${randomCode}`;
   }
 }
 

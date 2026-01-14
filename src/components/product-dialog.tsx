@@ -31,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { cn, generateSkuCode } from '@/lib/utils'
+import { cn, generateProductSkuCode } from '@/lib/utils'
 import { Plus, Edit } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 type Product = {
@@ -95,7 +95,7 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
     if (product && open) {
       setName(product.name || '')
       // Auto-generate SKU if empty (for new products from sales page)
-      setSku(product.sku && product.sku.trim() ? product.sku : generateSkuCode())
+      setSku(product.sku && product.sku.trim() ? product.sku : generateProductSkuCode())
       setCategoryId(product.categoryId || '')
       // Only pre-fill prices if product has a valid ID (edit mode)
       // If empty ID (new product from sales page), leave prices empty for user to enter
@@ -144,7 +144,7 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
       }
     } else if (!product && open) {
       setName('')
-      setSku(generateSkuCode()) // Auto-generate SKU for new products
+      setSku(generateProductSkuCode()) // Auto-generate SKU for new products
       setCategoryId('')
       setNewCategoryName('')
       setShowNewCategory(false)
@@ -500,7 +500,7 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
                           type="button"
                           variant="outline"
                           size="icon"
-                          onClick={() => setSku(generateSkuCode())}
+                          onClick={() => setSku(generateProductSkuCode())}
                           title="Generate new code"
                           className="flex-shrink-0"
                         >

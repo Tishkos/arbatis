@@ -31,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { cn, generateSkuCode } from '@/lib/utils'
+import { cn, generateProductSkuCode } from '@/lib/utils'
 import { Plus, Edit } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -144,7 +144,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
     } else if (!motorcycle && open) {
       setBrand('')
       setModel('')
-      setSku(generateSkuCode()) // Auto-generate SKU for new motorcycles
+      setSku(generateProductSkuCode()) // Auto-generate SKU for new motorcycles
       setYear('')
       setEngineSize('')
       setVin('')
@@ -496,7 +496,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
                         type="button"
                         variant="outline"
                         size="icon"
-                        onClick={() => setSku(generateSkuCode())}
+                        onClick={() => setSku(generateProductSkuCode())}
                         title="Generate new code"
                         className="flex-shrink-0"
                       >

@@ -181,8 +181,8 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     return false
   })()
   
-  const currencySymbol = isMotorcycle ? '$' : 'ع.د '
-    const currencyLabel = isMotorcycle ? 'USD' : 'ع.د'
+  const currencySymbol = isMotorcycle ? '$' : 'د.ع '
+    const currencyLabel = isMotorcycle ? 'USD' : 'د.ع'
 
   // Fetch motorcycle details for items that need them
   useEffect(() => {
@@ -352,7 +352,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const invoiceParts = invoice.invoiceNumber.split('-')
     const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoice.invoiceNumber.slice(-6)
 
-    // Format date as MM/DD/YYYY HH:MM AM/PM
+    // Format date as DD/MM/YYYY HH:MM AM/PM
     const invoiceDate = new Date(invoice.invoiceDate)
     const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
     const day = String(invoiceDate.getDate()).padStart(2, '0')
@@ -361,7 +361,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
     const ampm = hours >= 12 ? 'PM' : 'AM'
     const displayHours = hours % 12 || 12
-    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
+    const formattedDate = `${day}/${month}/${year} ${displayHours}:${minutes} ${ampm}`
 
     // Get customer name and address
     let customerName = 'Unknown'
@@ -428,11 +428,28 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       let sku: string | null = null
       let brandOrProductName: string | null = null
       let imageUrl: string | null = null
+      let categoryName: string | null = null
       
       // Check if it's a product item
       if (item.product) {
         sku = item.product.sku || null
         brandOrProductName = item.product.name || null
+        // Fetch category if productId exists
+        const productIdToFetch = item.product.id || item.productId
+        if (productIdToFetch) {
+          try {
+            const productResponse = await fetch(`${origin}/api/products/${productIdToFetch}`)
+            if (productResponse.ok) {
+              const productData = await productResponse.json()
+              if (productData.product?.category) {
+                categoryName = productData.product.category.nameKu || productData.product.category.nameAr || productData.product.category.name || null
+              }
+            }
+          } catch (error) {
+            // Failed to fetch category, leave as null
+            console.warn('Failed to fetch category for product:', productIdToFetch, error)
+          }
+        }
         
         // Construct image path from product SKU (lowercase)
         // Format: http://localhost:3000/products/{sku}.jpg (e.g., f05a9j.jpg for SKU F05A9J)
@@ -510,6 +527,9 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
               if (productData.product) {
                 sku = productData.product.sku || null
                 brandOrProductName = productData.product.name || null
+                if (productData.product.category) {
+                  categoryName = productData.product.category.nameKu || productData.product.category.nameAr || productData.product.category.name || null
+                }
                 // Try to get image URL if SKU exists
                 if (sku) {
                   const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
@@ -535,7 +555,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         }
       }
       
-      return { ...item, sku, brandOrProductName, imageUrl }
+      return { ...item, sku, brandOrProductName, imageUrl, categoryName }
     }))
 
     // Calculate previous balance (balance before this invoice)
@@ -547,6 +567,9 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const amountDue = Number(invoice.amountDue || 0)
     const previousBalance = invoice.customer ? (currentDebt - amountDue) : 0
     const totalBalanceNow = currentDebt
+
+    // Get invoicer name
+    const invoicerName = invoice.createdBy?.name || invoice.createdBy?.email || ''
 
     const printContent = `
 <!DOCTYPE html>
@@ -831,8 +854,26 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       }
       
       @page {
-        margin-bottom: 20mm;
+        margin-bottom: 3mm;
       }
+      
+      .print-footer {
+        position: fixed;
+        bottom: 1mm;
+        left: 0;
+        right: 0;
+        padding: 0.5mm 10mm;
+        font-size: 6.5pt;
+        color: #666;
+        text-align: center;
+        background-color: transparent;
+        z-index: 1000;
+        line-height: 1.2;
+      }
+    }
+    
+    .print-footer {
+      display: none;
     }
   </style>
 </head>
@@ -906,10 +947,10 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
               <td class="text-center">${index + 1}</td>
               ${imageCell}
               <td>${escapeHtml(brandOrProductName)}</td>
-              <td>${escapeHtml(skuCode)}</td>
+              <td>${escapeHtml(item.categoryName || '-')}</td>
               <td class="text-right">${item.quantity}</td>
-              <td class="text-right">${currencySymbol}${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
-              <td class="text-right">${currencySymbol}${item.lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+              <td class="text-right">${item.unitPrice.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
+              <td class="text-right">${item.lineTotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
             </tr>
           `
           }).join('') : `
@@ -924,21 +965,21 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
       <table class="footer-table">
         <tbody>
           <tr>
-            <td>${escapeHtml(t('totalOfThisInvoice') || t('subtotal') || 'Total of This Invoice')} (${currencyLabel}):</td>
-            <td>${currencySymbol}${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+            <td>${escapeHtml(t('totalOfThisInvoice') || t('subtotal') || 'Total of This Invoice')}:</td>
+            <td>${invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
           </tr>
           <tr>
             <td>${escapeHtml(t('amountPaid') || 'Amount Paid')}:</td>
-            <td>${currencySymbol}${(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+            <td>${(invoice.amountPaid || 0).toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
           </tr>
           ${invoice.customer ? `
           <tr>
             <td>${escapeHtml(t('balanceBeforeInvoice') || 'Previous Balance')}:</td>
-            <td>${currencySymbol}${previousBalance.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+            <td>${previousBalance.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
           </tr>
           <tr style="border-top: 2px solid #FFFFFF; font-weight: bold;">
             <td>${escapeHtml(t('totalBalanceNow') || 'Total Balance Now')}:</td>
-            <td>${currencySymbol}${totalBalanceNow.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })}</td>
+            <td>${totalBalanceNow.toLocaleString('en-US', { minimumFractionDigits: isMotorcycle ? 2 : 0, maximumFractionDigits: 2 })} ${currencySymbol}</td>
           </tr>
           ` : ''}
         </tbody>
@@ -946,23 +987,30 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     </div>
   </div>
   
+  <div class="print-footer">
+    <span>لاپەڕەی <span class="page-number">1</span>/<span class="total-pages">1</span></span>${invoicerName ? ` <span style="color: #999; margin-left: 10px;">${escapeHtml(invoicerName)}</span>` : ''}
+  </div>
+  
   <script>
     window.onload = function() {
-      // Add print styles for page numbers
+      // Calculate total pages (approximate)
+      const totalPages = Math.max(1, Math.ceil(document.body.scrollHeight / 1123)); // A4 height in pixels at 96dpi
+      
+      // Update page numbers
+      document.querySelectorAll('.total-pages').forEach(el => {
+        el.textContent = String(totalPages);
+      });
+      
+      // Add print styles for footer
       const style = document.createElement('style');
       style.textContent = \`
         @media print {
-          @page {
-            margin-bottom: 15mm;
-            @bottom-right-corner {
-              content: counter(page);
-              font-size: 9pt;
-              color: #666;
-              font-family: 'Kurdish', 'Arial Unicode MS', Arial, sans-serif;
-            }
+          .print-footer {
+            display: block !important;
           }
-          body {
-            counter-reset: page 1;
+          
+          @page {
+            margin-bottom: 3mm;
           }
         }
       \`;
@@ -1015,14 +1063,14 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     })()
     
     // Use text labels instead of symbols for PDF compatibility
-    const currencySymbol = isMotorcycle ? '$' : 'ع.د '
-    const currencyLabel = isMotorcycle ? 'USD' : 'ع.د'
+    const currencySymbol = isMotorcycle ? '$' : 'د.ع '
+    const currencyLabel = isMotorcycle ? 'USD' : 'د.ع'
 
     // Extract 6-character code from invoice number
     const invoiceParts = invoiceNumber.split('-')
     const invoiceCode = invoiceParts[invoiceParts.length - 1] || invoiceNumber.slice(-6)
 
-    // Format date as MM/DD/YYYY HH:MM AM/PM
+    // Format date as DD/MM/YYYY HH:MM AM/PM
     const invoiceDate = new Date(invoice.invoiceDate)
     const month = String(invoiceDate.getMonth() + 1).padStart(2, '0')
     const day = String(invoiceDate.getDate()).padStart(2, '0')
@@ -1031,7 +1079,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
     const minutes = String(invoiceDate.getMinutes()).padStart(2, '0')
     const ampm = hours >= 12 ? 'PM' : 'AM'
     const displayHours = hours % 12 || 12
-    const formattedDate = `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`
+    const formattedDate = `${day}/${month}/${year} ${displayHours}:${minutes} ${ampm}`
 
     // Get customer name and address
     let customerName = 'Unknown'
@@ -1778,7 +1826,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                   <div>
                     <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('columns.debtIqd')}</label>
                     <p className={cn("mt-1 text-sm font-medium", invoice.customer.debtIqd > 0 && "text-destructive", fontClass)}>
-                      ع.د {invoice.customer.debtIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                      د.ع {invoice.customer.debtIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                   <div>

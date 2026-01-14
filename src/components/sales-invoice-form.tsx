@@ -40,7 +40,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { IconPlus, IconX, IconCheck, IconChevronDown, IconFileText, IconAlertTriangle, IconCircleCheck } from "@tabler/icons-react"
+import { IconPlus, IconX, IconCheck, IconChevronDown, IconFileText, IconAlertTriangle, IconCircleCheck, IconArrowLeft } from "@tabler/icons-react"
 import { debounce } from "@/lib/utils"
 import { ProductDialog } from "@/components/product-dialog"
 import { MotorcycleDialog } from "@/components/motorcycle-dialog"
@@ -104,6 +104,7 @@ export interface InvoiceItem {
   stockQuantity?: number // Available stock quantity for validation
   isProductInDatabase?: boolean // Track if product exists in database
   productNotFound?: boolean // Track if product search was done and not found
+  originalPrice?: number // Original price from product/motorcycle for price comparison
 }
 
 export interface Customer {
@@ -189,9 +190,12 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   })
   
   // Details Tab
-  // Generate random ID for naming series (4-6 character alphanumeric)
+  // Generate random 6-digit numeric code (100000-999999)
   const generateRandomId = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase()
+    const min = 100000
+    const max = 999999
+    const code = Math.floor(Math.random() * (max - min + 1)) + min
+    return code.toString()
   }
   
   // Generate series based on customerName-date-generatedCode
@@ -250,6 +254,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   const [productDialogOpen, setProductDialogOpen] = React.useState(false)
   const [productDialogData, setProductDialogData] = React.useState<{ name: string; price: number; itemId: string } | null>(null)
   const [categories, setCategories] = React.useState<{ id: string; name: string }[]>([])
+  
+  // Category dropdown state (per item)
+  const [categoryViewState, setCategoryViewState] = React.useState<{ [key: string]: 'categories' | 'products' }>({})
+  const [selectedCategoryProducts, setSelectedCategoryProducts] = React.useState<{ [key: string]: Product[] }>({})
+  const [selectedCategoryId, setSelectedCategoryId] = React.useState<{ [key: string]: string | null }>({})
+  const [categoryPopoverOpen, setCategoryPopoverOpen] = React.useState<{ [key: string]: boolean }>({})
+  const [categoryProductSearch, setCategoryProductSearch] = React.useState<{ [key: string]: string }>({})
   
   // Motorcycle dialog state (for motorcycle invoice types)
   const [motorcycleDialogOpen, setMotorcycleDialogOpen] = React.useState(false)
@@ -1147,7 +1158,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         itemId: null,
         itemName: "",
         itemType: isProduct ? 'product' : 'motorcycle',
-        quantity: 1,
+        quantity: 0,
         rate: 0,
         amount: 0,
         stockQuantity: undefined, // No stock info until item is selected
@@ -1170,12 +1181,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
       itemId: item.id,
       itemName: isProductItem ? item.name : `${item.brand} ${item.model}`,
       itemType: isProductItem ? 'product' : 'motorcycle',
-      quantity: 1,
+      quantity: 0,
       rate: Number(price),
-      amount: Number(price),
+      amount: 0,
       stockQuantity: item.stockQuantity, // Store available stock quantity
       isProductInDatabase: true,
       productNotFound: false,
+      originalPrice: Number(price), // Store original price for comparison
     }
     
     // Validate quantity against stock
@@ -1242,6 +1254,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                     stockQuantity: foundProduct.stockQuantity, // Store stock quantity
                     isProductInDatabase: true,
                     productNotFound: false,
+                    originalPrice: Number(price), // Store original price for comparison
                   }
                   // Validate quantity against stock
                   if (updatedItem.quantity > foundProduct.stockQuantity) {
@@ -1317,6 +1330,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                     stockQuantity: foundMotorcycle.stockQuantity, // Store stock quantity
                     isProductInDatabase: true,
                     productNotFound: false,
+                    originalPrice: priceValue, // Store original price for comparison
                   }
                   // Validate quantity against stock
                   if (updatedItem.quantity > foundMotorcycle.stockQuantity) {
@@ -1372,7 +1386,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
             // If name is cleared, reset all fields
             if (!name.trim()) {
               updated.rate = 0
-              updated.quantity = 1
+              updated.quantity = 0
               updated.amount = 0
             } else {
               // Trigger search if name is not empty - use setTimeout to avoid blocking
@@ -2260,31 +2274,162 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                             <TableCell className="font-medium">{index + 1}</TableCell>
                             <TableCell className="align-top">
                               <div className="space-y-1 relative">
-                                <Input
-                                  placeholder={t('enterItemName')}
-                                  value={item.itemName}
-                                  onChange={(e) => {
-                                    const newValue = e.target.value
-                                    handleUpdateItemName(item.id, newValue)
-                                    if (newValue) {
-                                      setItemOpen(prev => ({ ...prev, [item.id]: true }))
-                                    } else {
-                                      setItemOpen(prev => ({ ...prev, [item.id]: false }))
-                                    }
-                                  }}
-                                  onFocus={() => {
-                                    if (item.itemName) {
-                                      setItemOpen(prev => ({ ...prev, [item.id]: true }))
-                                    }
-                                  }}
-                                  onBlur={() => {
-                                    // Delay closing to allow clicking on suggestions
-                                    setTimeout(() => {
-                                      setItemOpen(prev => ({ ...prev, [item.id]: false }))
-                                    }, 200)
-                                  }}
-                                  className="w-full"
-                                />
+                                <div className="flex gap-2">
+                                  <Input
+                                    placeholder={t('enterItemName')}
+                                    value={item.itemName}
+                                    onChange={(e) => {
+                                      const newValue = e.target.value
+                                      handleUpdateItemName(item.id, newValue)
+                                      if (newValue) {
+                                        setItemOpen(prev => ({ ...prev, [item.id]: true }))
+                                      } else {
+                                        setItemOpen(prev => ({ ...prev, [item.id]: false }))
+                                      }
+                                    }}
+                                    onFocus={() => {
+                                      if (item.itemName) {
+                                        setItemOpen(prev => ({ ...prev, [item.id]: true }))
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      // Delay closing to allow clicking on suggestions
+                                      setTimeout(() => {
+                                        setItemOpen(prev => ({ ...prev, [item.id]: false }))
+                                      }, 200)
+                                    }}
+                                    className="flex-1"
+                                  />
+                                  {isProduct && (
+                                    <Popover 
+                                      open={categoryPopoverOpen[item.id] || false} 
+                                      onOpenChange={(open) => {
+                                        setCategoryPopoverOpen(prev => ({ ...prev, [item.id]: open }))
+                                        if (!open) {
+                                          // Reset view state when popover closes
+                                          setCategoryViewState(prev => ({ ...prev, [item.id]: 'categories' }))
+                                          setCategoryProductSearch(prev => ({ ...prev, [item.id]: '' }))
+                                        }
+                                      }}
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className={cn("h-9", fontClass)}
+                                        >
+                                          پۆل
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-[300px] p-0" align="start">
+                                        {(categoryViewState[item.id] || 'categories') === 'categories' ? (
+                                          <Command>
+                                            <CommandInput placeholder="گەڕان بە پۆل..." />
+                                            <CommandList>
+                                              <CommandEmpty>هیچ پۆلێک نەدۆزرایەوە</CommandEmpty>
+                                              <CommandGroup>
+                                                {categories.map((category) => (
+                                                  <CommandItem
+                                                    key={category.id}
+                                                    value={category.id}
+                                                    onSelect={() => {
+                                                      // Fetch products by category and switch to products view
+                                                      fetch(`/api/products?categoryId=${category.id}&pageSize=100`)
+                                                        .then(res => res.json())
+                                                        .then(data => {
+                                                          if (data.products) {
+                                                            setSelectedCategoryProducts(prev => ({ ...prev, [item.id]: data.products || [] }))
+                                                            setSelectedCategoryId(prev => ({ ...prev, [item.id]: category.id }))
+                                                            setCategoryViewState(prev => ({ ...prev, [item.id]: 'products' }))
+                                                            setCategoryProductSearch(prev => ({ ...prev, [item.id]: '' }))
+                                                          }
+                                                        })
+                                                        .catch(console.error)
+                                                    }}
+                                                  >
+                                                    {category.name}
+                                                  </CommandItem>
+                                                ))}
+                                              </CommandGroup>
+                                            </CommandList>
+                                          </Command>
+                                        ) : (
+                                          <Command>
+                                            <div className="flex items-center border-b px-2">
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-8 w-8 p-0"
+                                                onClick={() => {
+                                                  setCategoryViewState(prev => ({ ...prev, [item.id]: 'categories' }))
+                                                  setCategoryProductSearch(prev => ({ ...prev, [item.id]: '' }))
+                                                }}
+                                              >
+                                                <IconArrowLeft className="h-4 w-4" />
+                                              </Button>
+                                              <CommandInput 
+                                                placeholder="گەڕان بە بەرهەم..." 
+                                                value={categoryProductSearch[item.id] || ''}
+                                                onValueChange={(value) => {
+                                                  setCategoryProductSearch(prev => ({ ...prev, [item.id]: value }))
+                                                }}
+                                              />
+                                            </div>
+                                            <CommandList>
+                                              <CommandEmpty>هیچ بەرهەمێک نەدۆزرایەوە</CommandEmpty>
+                                              <CommandGroup>
+                                                {(selectedCategoryProducts[item.id] || [])
+                                                  .filter(product => {
+                                                    const search = (categoryProductSearch[item.id] || '').toLowerCase()
+                                                    return !search || 
+                                                      product.name.toLowerCase().includes(search) ||
+                                                      product.sku.toLowerCase().includes(search)
+                                                  })
+                                                  .map((product) => {
+                                                    const productPrice = isWholesale ? product.jumlaPrice : product.mufradPrice
+                                                    const priceValue = typeof productPrice === 'string' ? parseFloat(productPrice) || 0 : productPrice || 0
+                                                    return (
+                                                      <CommandItem
+                                                        key={product.id}
+                                                        value={product.id}
+                                                        onSelect={() => {
+                                                          // Update item when product is manually selected
+                                                          setItems(prevItems => {
+                                                            return prevItems.map(prevItem => {
+                                                              if (prevItem.id === item.id) {
+                                                                const updatedItem = {
+                                                                  ...prevItem,
+                                                                  itemName: product.name,
+                                                                  rate: priceValue,
+                                                                  itemId: product.id,
+                                                                  stockQuantity: product.stockQuantity,
+                                                                  isProductInDatabase: true,
+                                                                  productNotFound: false,
+                                                                  quantity: 0,
+                                                                }
+                                                                updatedItem.amount = updatedItem.quantity * updatedItem.rate
+                                                                return updatedItem
+                                                              }
+                                                              return prevItem
+                                                            })
+                                                          })
+                                                          // Close popover after selection
+                                                          setCategoryPopoverOpen(prev => ({ ...prev, [item.id]: false }))
+                                                        }}
+                                                      >
+                                                        {product.name} ({product.sku}) - {priceValue.toLocaleString()} د.ع
+                                                      </CommandItem>
+                                                    )
+                                                  })}
+                                              </CommandGroup>
+                                            </CommandList>
+                                          </Command>
+                                        )}
+                                      </PopoverContent>
+                                    </Popover>
+                                  )}
+                                </div>
                                 {isProduct && (itemOpen[item.id] || false) && item.itemName && products.length > 0 && (
                                   <div className="w-full mt-1 bg-popover border rounded-md shadow-lg">
                                     <div className="p-1">
@@ -2326,18 +2471,9 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                         stockQuantity: product.stockQuantity, // Store stock quantity
                                                         isProductInDatabase: true,
                                                         productNotFound: false,
+                                                        quantity: 0, // Reset quantity to 0 when product is selected
                                                       }
-                                                      // Validate quantity against stock
-                                                      if (updatedItem.quantity > product.stockQuantity) {
-                                                        setAlertDialog({
-                                                          open: true,
-                                                          type: 'error',
-                                                          title: t('insufficientStock'),
-                                                          message: t('availableStockFor', { name: product.name, quantity: product.stockQuantity, current: updatedItem.quantity }),
-                                                        })
-                                                        updatedItem.quantity = product.stockQuantity
-                                                      }
-                                                      // Calculate amount: quantity * rate
+                                                      // Calculate amount: quantity * rate (will be 0 since quantity is 0)
                                                       updatedItem.amount = updatedItem.quantity * updatedItem.rate
                                                       return updatedItem
                                                     }
@@ -2406,18 +2542,9 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                         stockQuantity: motorcycle.stockQuantity, // Store stock quantity
                                                         isProductInDatabase: true,
                                                         productNotFound: false,
+                                                        quantity: 0, // Reset quantity to 0 when motorcycle is selected
                                                       }
-                                                      // Validate quantity against stock
-                                                      if (updatedItem.quantity > motorcycle.stockQuantity) {
-                                                        setAlertDialog({
-                                                          open: true,
-                                                          type: 'error',
-                                                          title: t('insufficientStock'),
-                                                          message: t('availableStockFor', { name: displayName, quantity: motorcycle.stockQuantity, current: updatedItem.quantity }),
-                                                        })
-                                                        updatedItem.quantity = motorcycle.stockQuantity
-                                                      }
-                                                      // Calculate amount: quantity * rate
+                                                      // Calculate amount: quantity * rate (will be 0 since quantity is 0)
                                                       updatedItem.amount = updatedItem.quantity * updatedItem.rate
                                                       return updatedItem
                                                     }
@@ -2478,14 +2605,15 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                               <div className="flex flex-col items-end gap-1">
                                 <Input
                                   type="number"
-                                  min="1"
+                                  min="0"
                                   max={item.stockQuantity !== undefined ? item.stockQuantity : undefined}
-                                  value={item.quantity}
+                                  value={item.quantity || ''}
                                   onChange={(e) =>
-                                    handleUpdateItem(item.id, 'quantity', parseInt(e.target.value) || 1)
+                                    handleUpdateItem(item.id, 'quantity', parseInt(e.target.value) || 0)
                                   }
                                   className={cn(
                                     "w-24 text-right",
+                                    (item.quantity === 0 || item.quantity === null || item.quantity === undefined) && "border-destructive focus:border-destructive focus:ring-destructive",
                                     item.stockQuantity !== undefined && item.quantity > item.stockQuantity && "border-destructive"
                                   )}
                                 />
@@ -2511,7 +2639,11 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                   onChange={(e) =>
                                     handleUpdateItem(item.id, 'rate', parseFloat(e.target.value) || 0)
                                   }
-                                  className="w-32 text-right"
+                                  className={cn(
+                                    "w-32 text-right",
+                                    item.originalPrice !== undefined && item.originalPrice !== null && item.rate < item.originalPrice && "border-yellow-500 focus:border-yellow-500 focus:ring-yellow-500/50",
+                                    item.originalPrice !== undefined && item.originalPrice !== null && item.rate > item.originalPrice && "border-purple-500 focus:border-purple-500 focus:ring-purple-500/50"
+                                  )}
                                 />
                               </div>
                             </TableCell>

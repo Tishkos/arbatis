@@ -36,6 +36,10 @@ RUN npm ci
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
+# Provide dummy DATABASE_URL for build (actual URL comes from runtime env via docker-compose)
+# This is needed because Next.js collects page data during build and some modules require DATABASE_URL
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy?schema=public"
+
 # Generate Prisma Client (use local version from node_modules)
 RUN ./node_modules/.bin/prisma generate
 

@@ -208,16 +208,15 @@ export async function POST(request: NextRequest) {
     let finalSku = sku?.trim() || ''
     
     if (!finalSku) {
-      // Generate random 6-character alphanumeric code
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+      // Generate random 4-digit customer code (1000-9999)
+      const min = 1000
+      const max = 9999
       let generated = ''
       
-      // Ensure uniqueness - try up to 10 times
-      for (let attempt = 0; attempt < 10; attempt++) {
-        generated = ''
-        for (let i = 0; i < 6; i++) {
-          generated += chars.charAt(Math.floor(Math.random() * chars.length))
-        }
+      // Ensure uniqueness - try up to 100 times (should be enough for 9000 possible codes)
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const code = Math.floor(Math.random() * (max - min + 1)) + min
+        generated = code.toString()
         
         const exists = await prisma.customer.findUnique({
           where: { sku: generated },
@@ -229,24 +228,33 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      // If still no unique SKU after 10 attempts, return error
+      // If still no unique SKU after 100 attempts, return error
       if (!finalSku) {
       return NextResponse.json(
-          { error: 'Failed to generate unique SKU. Please try again.' },
+          { error: 'Failed to generate unique customer code. Please try again.' },
           { status: 500 }
       )
     }
     } else {
+      // Validate user-provided SKU is numeric and in range 1000-9999
+      const skuNum = parseInt(finalSku)
+      if (isNaN(skuNum) || skuNum < 1000 || skuNum > 9999) {
+        return NextResponse.json(
+          { error: 'Customer code must be a number between 1000 and 9999' },
+          { status: 400 }
+        )
+      }
+      
       // Check if user-provided SKU already exists
-    const existingCustomer = await prisma.customer.findUnique({
+      const existingCustomer = await prisma.customer.findUnique({
         where: { sku: finalSku },
-    })
+      })
 
-    if (existingCustomer) {
-      return NextResponse.json(
-        { error: 'This Code (SKU) is already in use by another customer. Please choose a different code.' },
-        { status: 400 }
-      )
+      if (existingCustomer) {
+        return NextResponse.json(
+          { error: 'This Code (SKU) is already in use by another customer. Please choose a different code.' },
+          { status: 400 }
+        )
       }
     }
 
