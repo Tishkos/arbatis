@@ -92,7 +92,7 @@ async function exportData(options: BackupOptions) {
 
   // 3. Motorcycles
   console.log('Exporting motorcycles...')
-  const motorcycles = await prisma.motorcycle.findMany({ orderBy: { brand: 'asc' } })
+  const motorcycles = await prisma.motorcycle.findMany({ orderBy: { name: 'asc' } })
   exportData.data.motorcycles = await Promise.all(motorcycles.map(async (motorcycle) => ({
     ...motorcycle,
     imageBase64: await imageToBase64(motorcycle.image, includeImages),

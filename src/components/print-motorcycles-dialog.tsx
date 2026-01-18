@@ -28,21 +28,27 @@ import * as React from 'react'
 
 type Motorcycle = {
   id: string
-  brand: string
-  model: string
+  name: string // Primary field (replaced brand/model/year/engineSize/vin/color)
   sku: string
-  year: number | null
-  engineSize: string | null
-  vin: string | null
-  color: string | null
   usdRetailPrice: number | string
   usdWholesalePrice: number | string
   rmbPrice: number | string | null
   stockQuantity: number
   lowStockThreshold: number
   image: string | null
+  attachment: string | null
   status: string
+  notes: string | null
+  categoryId: string | null
   createdAt: string | Date
+  updatedAt: string | Date
+  // Backward compatibility fields (provided by mapping in motorcycles-table.tsx)
+  brand?: string
+  model?: string
+  year?: number | null
+  engineSize?: string | null
+  vin?: string | null
+  color?: string | null
 }
 
 interface PrintMotorcyclesDialogProps {
@@ -433,7 +439,7 @@ export function PrintMotorcyclesDialog({
                               {motorcycle.image ? (
                                 <img 
                                   src={motorcycle.image} 
-                                  alt={`${motorcycle.brand} ${motorcycle.model}`}
+                                  alt={motorcycle.name || `${motorcycle.brand || ''} ${motorcycle.model || ''}`.trim() || 'Motorcycle'}
                                   className="object-cover rounded"
                                   style={{ 
                                     width: `${imageSize * 3.78}px`, 
@@ -677,11 +683,12 @@ async function generateHTML(
     const row: any[] = []
     if (selectedColumns.includes('image')) {
       const imageUrl = getAbsoluteImageUrl(motorcycle.image)
-      row.push(imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(motorcycle.brand + ' ' + motorcycle.model)}" style="width: ${imageSize}mm; height: ${imageSize}mm; object-fit: cover; border-radius: 4px; display: block;" onerror="this.style.display='none';" />` : '')
+      const altText = motorcycle.name || `${motorcycle.brand || ''} ${motorcycle.model || ''}`.trim() || 'Motorcycle'
+      row.push(imageUrl ? `<img src="${imageUrl}" alt="${escapeHtml(altText)}" style="width: ${imageSize}mm; height: ${imageSize}mm; object-fit: cover; border-radius: 4px; display: block;" onerror="this.style.display='none';" />` : '')
     }
     if (selectedColumns.includes('id')) row.push(motorcycle.id.slice(0, 8))
-    if (selectedColumns.includes('brand')) row.push(motorcycle.brand)
-    if (selectedColumns.includes('model')) row.push(motorcycle.model)
+    if (selectedColumns.includes('brand')) row.push(motorcycle.brand || '')
+    if (selectedColumns.includes('model')) row.push(motorcycle.model || '')
     if (selectedColumns.includes('sku')) row.push(motorcycle.sku)
     if (selectedColumns.includes('year')) row.push(motorcycle.year || '-')
     if (selectedColumns.includes('engineSize')) row.push(motorcycle.engineSize || '-')
@@ -1291,8 +1298,8 @@ async function generatePDF(
       row.push('')
     }
     if (selectedColumns.includes('id')) row.push(motorcycle.id.slice(0, 8))
-    if (selectedColumns.includes('brand')) row.push(motorcycle.brand)
-    if (selectedColumns.includes('model')) row.push(motorcycle.model)
+    if (selectedColumns.includes('brand')) row.push(motorcycle.brand || '')
+    if (selectedColumns.includes('model')) row.push(motorcycle.model || '')
     if (selectedColumns.includes('sku')) row.push(motorcycle.sku)
     if (selectedColumns.includes('year')) row.push(motorcycle.year || 'N/A')
     if (selectedColumns.includes('engineSize')) row.push(motorcycle.engineSize || 'N/A')

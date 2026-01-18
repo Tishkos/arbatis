@@ -882,6 +882,13 @@ export function MotorcyclesTable() {
         currentPageMotorcycles={data.map(m => ({
           ...m,
           status: typeof m.status === 'string' ? m.status : 'IN_STOCK',
+          // Backward compatibility: map name to brand/model for print dialog
+          brand: m.name || '',
+          model: '',
+          year: null,
+          engineSize: null,
+          vin: null,
+          color: null,
         }))}
         currentPageCount={data.length}
         totalCount={paginationMeta.total}

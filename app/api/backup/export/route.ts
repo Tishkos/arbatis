@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
 
     // 3. Motorcycles with images
     const motorcycles = await prisma.motorcycle.findMany({
-      orderBy: { brand: 'asc' }
+      orderBy: { name: 'asc' }
     })
     exportData.data.motorcycles = await Promise.all(motorcycles.map(async (motorcycle) => ({
       ...motorcycle,
