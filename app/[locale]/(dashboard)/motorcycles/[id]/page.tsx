@@ -16,9 +16,37 @@ export default async function MotorcycleDetailPage({
     notFound()
   }
 
-  const motorcycle = await prisma.motorcycle.findUnique({
-    where: { id },
-  })
+  // Try to fetch with category relation first (new schema)
+  let motorcycle
+  try {
+    motorcycle = await prisma.motorcycle.findUnique({
+      where: { id },
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    })
+  } catch (error: any) {
+    // If category relation doesn't exist (old schema), fetch without it
+    if (error?.code === 'P2019' || error?.message?.includes('category')) {
+      motorcycle = await prisma.motorcycle.findUnique({
+        where: { id },
+      })
+      // Add null category for old schema
+      if (motorcycle) {
+        motorcycle = {
+          ...motorcycle,
+          category: null,
+        } as any
+      }
+    } else {
+      throw error
+    }
+  }
 
   if (!motorcycle) {
     notFound()
@@ -56,6 +84,7 @@ export default async function MotorcycleDetailPage({
     usdRetailPrice: Number(motorcycle.usdRetailPrice),
     usdWholesalePrice: Number(motorcycle.usdWholesalePrice),
     rmbPrice: motorcycle.rmbPrice ? Number(motorcycle.rmbPrice) : null,
+    category: (motorcycle as any).category || null, // Preserve category relation
     createdBy,
     updatedBy,
   }

@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { IconArrowLeft, IconPaperclip, IconCalendar, IconUser, IconEdit, IconTrash, IconFile, IconDownload, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { format } from 'date-fns'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { MotorcycleDialog } from './motorcycle-dialog'
 import { DeleteMotorcycleDialog } from './delete-motorcycle-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -36,13 +36,8 @@ import {
 
 type Motorcycle = {
   id: string
-  brand: string
-  model: string
+  name: string
   sku: string
-  year: number | null
-  engineSize: string | null
-  vin: string | null
-  color: string | null
   image: string | null
   attachment: string | null
   usdRetailPrice: number | string
@@ -52,6 +47,11 @@ type Motorcycle = {
   lowStockThreshold: number
   status: "IN_STOCK" | "RESERVED" | "SOLD" | "OUT_OF_STOCK"
   notes: string | null
+  categoryId: string | null
+  category: {
+    id: string
+    name: string
+  } | null
   createdAt: Date | string
   updatedAt: Date | string
   createdBy: {
@@ -102,6 +102,24 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
   const [isUploadingAttachments, setIsUploadingAttachments] = useState(false)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([])
+
+  // Fetch motorcycle categories for edit dialog
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await fetch('/api/motorcycle-categories')
+      const data = await response.json()
+      if (data.categories) {
+        setCategories(data.categories)
+      }
+    } catch (error) {
+      console.error('Error fetching motorcycle categories:', error)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   // Fetch activities
   useEffect(() => {
@@ -121,8 +139,7 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
                 const change = changes[key]
                 if (change.old !== change.new) {
                   const labelMap: { [key: string]: string } = {
-                    brand: t('columns.brand'),
-                    model: t('columns.model'),
+                    name: locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name",
                     sku: t('columns.sku'),
                     usdRetailPrice: t('columns.retailPrice'),
                     usdWholesalePrice: t('columns.wholesalePrice'),
@@ -183,8 +200,13 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
       .finally(() => setLoadingActivities(false))
   }, [motorcycle.id])
 
-  const initials = motorcycle.brand && motorcycle.model
-    ? `${motorcycle.brand[0]}${motorcycle.model[0]}`.toUpperCase()
+  const initials = motorcycle.name
+    ? motorcycle.name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
     : 'MC'
 
   const handleEditSuccess = () => {
@@ -271,20 +293,10 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
 
       // Create FormData with existing motorcycle data and new attachments
       const formData = new FormData()
-      formData.append('brand', motorcycle.brand)
-      formData.append('model', motorcycle.model)
+      formData.append('name', motorcycle.name)
       formData.append('sku', motorcycle.sku)
-      if (motorcycle.year) {
-        formData.append('year', String(motorcycle.year))
-      }
-      if (motorcycle.engineSize) {
-        formData.append('engineSize', motorcycle.engineSize)
-      }
-      if (motorcycle.vin) {
-        formData.append('vin', motorcycle.vin)
-      }
-      if (motorcycle.color) {
-        formData.append('color', motorcycle.color)
+      if (motorcycle.categoryId) {
+        formData.append('categoryId', motorcycle.categoryId)
       }
       formData.append('usdRetailPrice', String(motorcycle.usdRetailPrice))
       formData.append('usdWholesalePrice', String(motorcycle.usdWholesalePrice))
@@ -332,16 +344,21 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const statusColors = {
-      IN_STOCK: 'bg-green-100 text-green-800',
-      RESERVED: 'bg-yellow-100 text-yellow-800',
-      SOLD: 'bg-blue-100 text-blue-800',
-      OUT_OF_STOCK: 'bg-red-100 text-red-800',
-    }
+  const getStatusBadge = (status: string, stockQuantity: number) => {
+    // Determine status based on stock quantity instead of enum
+    const isAvailable = stockQuantity > 0
+    
+    const statusText = isAvailable 
+      ? (locale === 'ku' ? 'بەردەستە' : locale === 'ar' ? 'متاح' : 'Available')
+      : (locale === 'ku' ? 'بەردەست نییە' : locale === 'ar' ? 'غير متاح' : 'Not Available')
+    
+    const statusColor = isAvailable
+      ? 'bg-green-100 text-green-800'
+      : 'bg-red-100 text-red-800'
+    
     return (
-      <Badge className={cn(statusColors[status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800', fontClass)}>
-        {status.replace('_', ' ')}
+      <Badge className={cn(statusColor, fontClass)}>
+        {statusText}
       </Badge>
     )
   }
@@ -360,7 +377,7 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
             <IconArrowLeft className="h-4 w-4" />
           </Button>
           <h1 className={cn("text-3xl font-bold", fontClass)}>
-            {motorcycle.brand} {motorcycle.model}
+            {motorcycle.name}
           </h1>
         </div>
         <div className="flex items-center gap-2">
@@ -400,7 +417,7 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
                 </CardHeader>
                 <CardContent className="flex flex-col items-center gap-4">
                   <Avatar className="h-48 w-48">
-                    <AvatarImage src={motorcycle.image || undefined} alt={`${motorcycle.brand} ${motorcycle.model}`} />
+                    <AvatarImage src={motorcycle.image || undefined} alt={motorcycle.name} />
                     <AvatarFallback className="text-4xl">{initials}</AvatarFallback>
                   </Avatar>
                 </CardContent>
@@ -423,41 +440,23 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
                     <div>
                       <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.status')}</label>
                       <div className="mt-1">
-                        {getStatusBadge(motorcycle.status)}
+                        {getStatusBadge(motorcycle.status, motorcycle.stockQuantity)}
                       </div>
                     </div>
                     <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('columns.brand')}</label>
-                      <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.brand}</p>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name"}</label>
+                      <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.name}</p>
                     </div>
                     <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('columns.model')}</label>
-                      <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.model}</p>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t("columns.category")}</label>
+                      <div className="mt-1">
+                        {motorcycle.category ? (
+                          <Badge variant="outline" className={fontClass}>{motorcycle.category.name}</Badge>
+                        ) : (
+                          <span className={cn("text-sm text-muted-foreground", fontClass)}>-</span>
+                        )}
+                      </div>
                     </div>
-                    {motorcycle.year && (
-                      <div>
-                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.year')}</label>
-                        <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.year}</p>
-                      </div>
-                    )}
-                    {motorcycle.engineSize && (
-                      <div>
-                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.engineSize')}</label>
-                        <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.engineSize}</p>
-                      </div>
-                    )}
-                    {motorcycle.color && (
-                      <div>
-                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.color')}</label>
-                        <p className={cn("mt-1 text-sm", fontClass)}>{motorcycle.color}</p>
-                      </div>
-                    )}
-                    {motorcycle.vin && (
-                      <div>
-                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.vin')}</label>
-                        <p className={cn("mt-1 text-sm font-mono", fontClass)}>{motorcycle.vin}</p>
-                      </div>
-                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -714,7 +713,9 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
         open={isEditDialogOpen}
         onOpenChange={setIsEditDialogOpen}
         onSuccess={handleEditSuccess}
+        categories={categories}
         motorcycle={motorcycle}
+        onCategoriesChange={fetchCategories}
       />
 
       {/* Delete Dialog */}
@@ -722,7 +723,7 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
         open={isDeleteDialogOpen}
         onOpenChange={setIsDeleteDialogOpen}
         onSuccess={handleDeleteSuccess}
-        motorcycleName={`${motorcycle.brand} ${motorcycle.model}`}
+        motorcycleName={motorcycle.name}
         motorcycleId={motorcycle.id}
       />
     </div>
@@ -964,4 +965,5 @@ function InvoiceTable({
     </div>
   )
 }
+
 

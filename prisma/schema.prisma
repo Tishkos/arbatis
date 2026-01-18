@@ -197,8 +197,32 @@ model Product {
 }
 
 // ============================================================================
-// Motorcycles
+// Motorcycles & Motorcycle Categories
 // ============================================================================
+
+model MotorcycleCategory {
+  id          String    @id @default(cuid())
+  name        String
+  nameAr      String?   // Arabic name
+  nameKu      String?   // Kurdish name
+  description String?
+  parentId    String?   // For nested categories
+  
+  // Relations
+  parent      MotorcycleCategory? @relation("MotorcycleCategoryHierarchy", fields: [parentId], references: [id])
+  children    MotorcycleCategory[] @relation("MotorcycleCategoryHierarchy")
+  motorcycles Motorcycle[]
+  
+  // Audit
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  
+  @@index([parentId])
+  @@index([name])
+  @@map("motorcycle_categories")
+}
 
 enum MotorcycleStatus {
   IN_STOCK
@@ -210,14 +234,9 @@ enum MotorcycleStatus {
 model Motorcycle {
   id          String            @id @default(cuid())
   
-  // Basic Info
-  brand       String
-  model       String
+  // Basic Info - matches current database structure
+  name        String
   sku         String            @unique // SKU (shared with products, must be unique)
-  year        Int?
-  engineSize  String?           // e.g., "250cc"
-  vin         String?           // VIN/Chassis number (removed unique constraint)
-  color       String?
   
   // Image & Attachments
   image       String?           // Product image URL
@@ -236,6 +255,8 @@ model Motorcycle {
   status      MotorcycleStatus  @default(IN_STOCK)
   
   // Relations
+  categoryId  String?           // Optional category
+  category    MotorcycleCategory? @relation(fields: [categoryId], references: [id])
   branchId    String?           // For multi-warehouse (future)
   branch      Branch?           @relation(fields: [branchId], references: [id])
   
@@ -247,11 +268,10 @@ model Motorcycle {
   createdById String?
   updatedById String?
   
-  @@index([brand])
-  @@index([model])
+  @@index([name])
   @@index([status])
-  @@index([year])
   @@index([sku])
+  @@index([categoryId])
   @@map("motorcycles")
 }
 

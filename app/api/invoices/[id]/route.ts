@@ -223,6 +223,42 @@ export async function PUT(
         throw new Error('Invoice not found')
       }
 
+      // ============================================================================
+      // STOCK RECALCULATION WHEN EDITING INVOICE
+      // ============================================================================
+      // CRITICAL: When editing an invoice, we must:
+      // 1. Reverse the original invoice's stock impact (restore stock)
+      // 2. Apply the new invoice's stock impact (reduce stock)
+      // This ensures stock quantities are always correctly recalculated
+      //
+      // Example: Product has 100 in stock
+      // - Original invoice: Sold 50 → Stock becomes 50
+      // - Edit invoice: Change to 60 items
+      //   Step 1: Restore 50 → Stock becomes 100 (back to original)
+      //   Step 2: Reduce 60 → Stock becomes 40 (correct final state)
+      // ============================================================================
+      
+      // ============================================================================
+      // STOCK UPDATE LOGIC WHEN EDITING INVOICE:
+      // ============================================================================
+      // When editing an invoice, we need to correctly handle stock quantity changes:
+      // 
+      // Example: Original invoice sold 50 items (stock went from 100 to 50)
+      //          User edits invoice to sell 40 items instead
+      //          Result: Stock should be 60 (50 + 10 returned = 60)
+      //
+      // Process:
+      // 1. Delete old stock movements (audit trail cleanup)
+      // 2. Restore stock: Add back original quantities (50 items returned: 50 + 50 = 100)
+      // 3. Reduce stock: Subtract new quantities (40 items sold: 100 - 40 = 60)
+      // 4. Create new stock movements (audit trail for new quantities)
+      //
+      // This ensures:
+      // - If quantity decreases (50 -> 40): Stock increases correctly (+10)
+      // - If quantity increases (50 -> 60): Stock decreases correctly (-10)
+      // - Stock is always accurate in database, sales, and invoices
+      // ============================================================================
+      
       // REVERSE ORIGINAL IMPACT:
       // 1. Delete old stock movements related to this invoice
       await tx.stockMovement.deleteMany({
@@ -231,21 +267,34 @@ export async function PUT(
         },
       })
 
-      // 2. Restore stock quantities for original items
+      // 2. Restore stock quantities for original items (add back what was originally sold)
       // Aggregate quantities by product/motorcycle ID to handle duplicates correctly
+      // CRITICAL: Use sale.items if invoice.items is empty (some invoices might store items in sale)
+      const itemsToRestore = originalInvoice.items && originalInvoice.items.length > 0 
+        ? originalInvoice.items 
+        : (originalInvoice.sale?.items || [])
+      
+      console.log(`[STOCK RESTORE] Processing ${itemsToRestore.length} items for restoration (from ${originalInvoice.items?.length > 0 ? 'invoice.items' : 'sale.items'})`)
+      
       const stockRestore: Map<string, { type: 'product' | 'motorcycle', quantity: number }> = new Map()
       
-      for (const item of originalInvoice.items) {
-        const isMotorcycle = item.notes?.startsWith('MOTORCYCLE:')
+      for (const item of itemsToRestore) {
+        // Check if it's a motorcycle - handle both uppercase and lowercase
+        const notes = item.notes || ''
+        const isMotorcycle = notes.toUpperCase().trim().startsWith('MOTORCYCLE:')
         
-        if (isMotorcycle && item.notes) {
-          const motorcycleId = item.notes.replace('MOTORCYCLE:', '')
-          const key = `motorcycle:${motorcycleId}`
-          const existing = stockRestore.get(key)
-          stockRestore.set(key, {
-            type: 'motorcycle',
-            quantity: (existing?.quantity || 0) + item.quantity,
-          })
+        if (isMotorcycle && notes) {
+          // Extract motorcycle ID - handle case insensitivity
+          const motorcycleId = notes.replace(/^MOTORCYCLE:/i, '').trim()
+          if (motorcycleId) {
+            const key = `motorcycle:${motorcycleId}`
+            const existing = stockRestore.get(key)
+            stockRestore.set(key, {
+              type: 'motorcycle',
+              quantity: (existing?.quantity || 0) + item.quantity,
+            })
+            console.log(`[STOCK RESTORE] Motorcycle ${motorcycleId}: Adding back ${item.quantity} units (total to restore: ${(existing?.quantity || 0) + item.quantity})`)
+          }
         } else if (item.productId) {
           const key = `product:${item.productId}`
           const existing = stockRestore.get(key)
@@ -253,10 +302,15 @@ export async function PUT(
             type: 'product',
             quantity: (existing?.quantity || 0) + item.quantity,
           })
+          console.log(`[STOCK RESTORE] Product ${item.productId}: Adding back ${item.quantity} units (total to restore: ${(existing?.quantity || 0) + item.quantity})`)
+        } else {
+          console.warn(`[STOCK RESTORE] Item has no productId and no MOTORCYCLE: notes - skipping:`, { itemId: item.id, notes: item.notes, productId: item.productId })
         }
       }
 
       // Now restore stock for each unique product/motorcycle
+      // CRITICAL: This restores the stock that was originally taken by this invoice
+      // We add back the quantities so the stock is back to its pre-invoice state
       for (const [key, data] of stockRestore.entries()) {
         if (data.type === 'motorcycle') {
           const motorcycleId = key.replace('motorcycle:', '')
@@ -266,12 +320,17 @@ export async function PUT(
           })
           if (motorcycle) {
             // Restore stock: add back the total quantity that was sold for this motorcycle
+            const currentStock = Number(motorcycle.stockQuantity || 0)
+            const restoredStock = currentStock + data.quantity
+            console.log(`[STOCK RESTORE] Motorcycle ${motorcycleId}: Current=${currentStock}, Restoring=${data.quantity}, New=${restoredStock}`)
             await tx.motorcycle.update({
               where: { id: motorcycleId },
               data: {
-                stockQuantity: motorcycle.stockQuantity + data.quantity,
+                stockQuantity: restoredStock,
               },
             })
+          } else {
+            console.warn(`[STOCK RESTORE] Motorcycle ${motorcycleId} not found in database`)
           }
         } else {
           const productId = key.replace('product:', '')
@@ -281,10 +340,11 @@ export async function PUT(
           })
           if (product) {
             // Restore stock: add back the total quantity that was sold for this product
+            const restoredStock = product.stockQuantity + data.quantity
             await tx.product.update({
               where: { id: productId },
               data: {
-                stockQuantity: product.stockQuantity + data.quantity,
+                stockQuantity: restoredStock,
               },
             })
           }
@@ -425,23 +485,32 @@ export async function PUT(
           })
         }
 
+        // ============================================================================
         // APPLY NEW IMPACT:
-        // 4. Update stock quantities for new items
+        // 4. Update stock quantities for new items (reduce stock for new quantities)
+        // CRITICAL: Stock has already been restored above, so we now apply the NEW quantities
         // Aggregate quantities by product/motorcycle ID to handle duplicates correctly
+        // ============================================================================
         const stockReduce: Map<string, { type: 'product' | 'motorcycle', quantity: number, item: any }> = new Map()
         
         for (const item of body.items) {
-          const isMotorcycle = item.notes?.startsWith('MOTORCYCLE:')
+          // Check if it's a motorcycle - handle both uppercase and lowercase (same as restoration)
+          const notes = item.notes || ''
+          const isMotorcycle = notes.toUpperCase().trim().startsWith('MOTORCYCLE:')
           
-          if (isMotorcycle) {
-            const motorcycleId = item.notes.replace('MOTORCYCLE:', '')
-            const key = `motorcycle:${motorcycleId}`
-            const existing = stockReduce.get(key)
-            stockReduce.set(key, {
-              type: 'motorcycle',
-              quantity: (existing?.quantity || 0) + item.quantity,
-              item: item, // Keep first item for reference
-            })
+          if (isMotorcycle && notes) {
+            // Extract motorcycle ID - handle case insensitivity (same as restoration)
+            const motorcycleId = notes.replace(/^MOTORCYCLE:/i, '').trim()
+            if (motorcycleId) {
+              const key = `motorcycle:${motorcycleId}`
+              const existing = stockReduce.get(key)
+              stockReduce.set(key, {
+                type: 'motorcycle',
+                quantity: (existing?.quantity || 0) + item.quantity,
+                item: item, // Keep first item for reference
+              })
+              console.log(`[STOCK REDUCE] Motorcycle ${motorcycleId}: Will reduce ${(existing?.quantity || 0) + item.quantity} units`)
+            }
           } else if (item.productId) {
             const key = `product:${item.productId}`
             const existing = stockReduce.get(key)
@@ -454,43 +523,57 @@ export async function PUT(
         }
 
         // Now reduce stock for each unique product/motorcycle
+        // CRITICAL: Stock has already been restored above, so we're now applying the NEW quantities
+        // This ensures correct recalculation: original stock + restored - new = final stock
         for (const [key, data] of stockReduce.entries()) {
           if (data.type === 'motorcycle') {
             const motorcycleId = key.replace('motorcycle:', '')
+            // Fetch current stock AFTER restoration (which happened above)
             const motorcycle = await tx.motorcycle.findUnique({
               where: { id: motorcycleId },
               select: { stockQuantity: true },
             })
             
             if (motorcycle) {
-              // Validate stock (already restored, so current stock should include original sold quantity)
-              if (data.quantity > motorcycle.stockQuantity) {
-                throw new Error(`Insufficient stock for motorcycle. Available: ${motorcycle.stockQuantity}, Requested: ${data.quantity}`)
+              // Validate stock availability (stock was already restored above)
+              const currentStock = Number(motorcycle.stockQuantity || 0)
+              if (data.quantity > currentStock) {
+                throw new Error(`Insufficient stock for motorcycle. Available: ${currentStock}, Requested: ${data.quantity}`)
               }
               
-              // Reduce stock
+              // Calculate new stock: current (restored) stock minus new quantity
+              const newStock = Math.max(0, currentStock - data.quantity)
+              console.log(`[STOCK REDUCE] Motorcycle ${motorcycleId}: Current=${currentStock}, Reducing=${data.quantity}, New=${newStock}`)
+              
+              // Update stock with new quantity
               await tx.motorcycle.update({
                 where: { id: motorcycleId },
                 data: {
-                  stockQuantity: Math.max(0, motorcycle.stockQuantity - data.quantity),
+                  stockQuantity: newStock,
                 },
               })
+              
+              // Note: Motorcycles don't have stock movement records (only products do)
+              // Stock changes for motorcycles are tracked via activities
             }
           } else {
             const productId = key.replace('product:', '')
+            // Fetch current stock AFTER restoration (which happened above)
             const product = await tx.product.findUnique({
               where: { id: productId },
               select: { stockQuantity: true },
             })
             
             if (product) {
-              // Validate stock (already restored, so current stock should include original sold quantity)
+              // Validate stock availability (stock was already restored above)
               if (data.quantity > product.stockQuantity) {
                 throw new Error(`Insufficient stock for product. Available: ${product.stockQuantity}, Requested: ${data.quantity}`)
               }
               
-              // Reduce stock
+              // Calculate new stock: current (restored) stock minus new quantity
               const newStock = Math.max(0, product.stockQuantity - data.quantity)
+              
+              // Update stock with new quantity
               await tx.product.update({
                 where: { id: productId },
                 data: {
@@ -499,6 +582,7 @@ export async function PUT(
               })
               
               // Create stock movement record (audit trail) - one per product with total quantity
+              // This records the NEW sale quantity after invoice edit
               await tx.stockMovement.create({
                 data: {
                   productId: productId,

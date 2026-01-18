@@ -517,17 +517,23 @@ export function ProductsTable() {
   const [deletingProduct, setDeletingProduct] = React.useState<Product | null>(null)
   const [isPrintDialogOpen, setIsPrintDialogOpen] = React.useState(false)
 
-  // Fetch categories
-  React.useEffect(() => {
-    fetch("/api/categories")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.categories) {
-          setCategories(data.categories)
-        }
-      })
-      .catch(console.error)
+  // Fetch categories function
+  const fetchCategories = React.useCallback(async () => {
+    try {
+      const response = await fetch("/api/categories")
+      const data = await response.json()
+      if (data.categories) {
+        setCategories(data.categories)
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error)
+    }
   }, [])
+
+  // Fetch categories on mount
+  React.useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   // Fetch products
   const fetchProducts = React.useCallback(async () => {
@@ -888,6 +894,7 @@ export function ProductsTable() {
         }}
         categories={categories}
         product={editingProduct}
+        onCategoriesChange={fetchCategories}
       />
 
       {/* Delete Product Dialog */}

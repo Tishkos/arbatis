@@ -129,8 +129,9 @@ export interface Product {
 
 export interface Motorcycle {
   id: string
-  brand: string
-  model: string
+  name?: string // New schema uses name
+  brand?: string // Old schema fallback
+  model?: string // Old schema fallback
   sku: string
   usdRetailPrice: number
   usdWholesalePrice: number
@@ -245,22 +246,28 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   
   // Items
   const [items, setItems] = React.useState<InvoiceItem[]>([])
-  const [itemSearch, setItemSearch] = React.useState("")
   const [itemOpen, setItemOpen] = React.useState<{ [key: string]: boolean }>({})
-  const [products, setProducts] = React.useState<Product[]>([])
-  const [motorcycles, setMotorcycles] = React.useState<Motorcycle[]>([])
+  const [itemProducts, setItemProducts] = React.useState<{ [key: string]: Product[] }>({})
+  const [itemMotorcycles, setItemMotorcycles] = React.useState<{ [key: string]: Motorcycle[] }>({})
   
   // Product dialog state
   const [productDialogOpen, setProductDialogOpen] = React.useState(false)
   const [productDialogData, setProductDialogData] = React.useState<{ name: string; price: number; itemId: string } | null>(null)
   const [categories, setCategories] = React.useState<{ id: string; name: string }[]>([])
   
-  // Category dropdown state (per item)
+  // Category dropdown state (per item) - Products
   const [categoryViewState, setCategoryViewState] = React.useState<{ [key: string]: 'categories' | 'products' }>({})
   const [selectedCategoryProducts, setSelectedCategoryProducts] = React.useState<{ [key: string]: Product[] }>({})
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<{ [key: string]: string | null }>({})
   const [categoryPopoverOpen, setCategoryPopoverOpen] = React.useState<{ [key: string]: boolean }>({})
   const [categoryProductSearch, setCategoryProductSearch] = React.useState<{ [key: string]: string }>({})
+  
+  // Category dropdown state (per item) - Motorcycles
+  const [motorcycleCategoryViewState, setMotorcycleCategoryViewState] = React.useState<{ [key: string]: 'categories' | 'motorcycles' }>({})
+  const [selectedCategoryMotorcycles, setSelectedCategoryMotorcycles] = React.useState<{ [key: string]: Motorcycle[] }>({})
+  const [selectedMotorcycleCategoryId, setSelectedMotorcycleCategoryId] = React.useState<{ [key: string]: string | null }>({})
+  const [motorcycleCategoryPopoverOpen, setMotorcycleCategoryPopoverOpen] = React.useState<{ [key: string]: boolean }>({})
+  const [categoryMotorcycleSearch, setCategoryMotorcycleSearch] = React.useState<{ [key: string]: string }>({})
   
   // Motorcycle dialog state (for motorcycle invoice types)
   const [motorcycleDialogOpen, setMotorcycleDialogOpen] = React.useState(false)
@@ -276,23 +283,44 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     invoiceNumber: '',
   })
   
-  // Fetch categories for product dialog
-  React.useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const response = await fetch('/api/categories')
-        if (response.ok) {
-          const data = await response.json()
-          if (data.categories) {
-            setCategories(data.categories)
-          }
+  // Fetch categories for product dialog (convert to callback for reuse)
+  const fetchCategories = React.useCallback(async () => {
+    try {
+      const response = await fetch('/api/categories')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.categories) {
+          setCategories(data.categories)
         }
-      } catch (error) {
-        console.error('Error fetching categories:', error)
       }
+    } catch (error) {
+      console.error('Error fetching categories:', error)
     }
-    fetchCategories()
   }, [])
+
+  React.useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
+  
+  // Fetch motorcycle categories (separate from product categories)
+  const [motorcycleCategories, setMotorcycleCategories] = React.useState<{ id: string; name: string }[]>([])
+  const fetchMotorcycleCategories = React.useCallback(async () => {
+    try {
+      const response = await fetch('/api/motorcycle-categories')
+      if (response.ok) {
+        const data = await response.json()
+        if (data.categories) {
+          setMotorcycleCategories(data.categories)
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching motorcycle categories:', error)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    fetchMotorcycleCategories()
+  }, [fetchMotorcycleCategories])
   
   // Taxes
   const [taxCategory, setTaxCategory] = React.useState("")
@@ -304,6 +332,9 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   const [discountEnabled, setDiscountEnabled] = React.useState(false)
   const [discountType, setDiscountType] = React.useState<'percentage' | 'value'>('percentage')
   const [discountAmount, setDiscountAmount] = React.useState(0)
+  
+  // Price-aware styling toggle
+  const [priceAwareEnabled, setPriceAwareEnabled] = React.useState(false)
   
   // Totals
   const [totalQty, setTotalQty] = React.useState(0)
@@ -498,6 +529,31 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           // Set invoice number
           setNamingSeries(invoice.invoiceNumber || '')
           
+          // Determine invoice type from actual invoice items (not from saleType prop)
+          // Check if any item is a motorcycle by looking at notes or product name
+          // This needs to be determined BEFORE processing items so it's available throughout
+          const itemsToCheck = (invoice.items && invoice.items.length > 0) 
+            ? invoice.items 
+            : (invoice.sale?.items || [])
+          
+          // First, try to detect from items
+          let invoiceHasMotorcycle = itemsToCheck.some((item: any) => {
+            const notes = item.notes || ''
+            const productName = item.product?.name || ''
+            return notes.toUpperCase().trim().startsWith('MOTORCYCLE:') || 
+                   productName.toLowerCase().includes('motorcycle')
+          })
+          
+          // Fallback: check invoice currency field (set by API based on items)
+          if (!invoiceHasMotorcycle && invoice.currency === 'USD') {
+            invoiceHasMotorcycle = true
+          } else if (invoiceHasMotorcycle === false && invoice.currency === 'IQD') {
+            invoiceHasMotorcycle = false
+          }
+          
+          // Store the actual invoice type for use in Payment Summary and display
+          setActualInvoiceIsMotorcycle(invoiceHasMotorcycle)
+          
           // Set customer
           if (invoice.customer) {
             setCustomerId(invoice.customer.id)
@@ -513,30 +569,6 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               currentBalance: invoice.customer.currentBalance || 0,
             })
             setFetchCustomer(true)
-            
-            // Determine invoice type from actual invoice items (not from saleType prop)
-            // Check if any item is a motorcycle by looking at notes or product name
-            const itemsToCheck = (invoice.items && invoice.items.length > 0) 
-              ? invoice.items 
-              : (invoice.sale?.items || [])
-            
-            // First, try to detect from items
-            let invoiceHasMotorcycle = itemsToCheck.some((item: any) => {
-              const notes = item.notes || ''
-              const productName = item.product?.name || ''
-              return notes.toUpperCase().trim().startsWith('MOTORCYCLE:') || 
-                     productName.toLowerCase().includes('motorcycle')
-            })
-            
-            // Fallback: check invoice currency field (set by API based on items)
-            if (!invoiceHasMotorcycle && invoice.currency === 'USD') {
-              invoiceHasMotorcycle = true
-            } else if (invoiceHasMotorcycle === false && invoice.currency === 'IQD') {
-              invoiceHasMotorcycle = false
-            }
-            
-            // Store the actual invoice type for use in Payment Summary and display
-            setActualInvoiceIsMotorcycle(invoiceHasMotorcycle)
             
             // Update currency based on detected invoice type
             if (invoiceHasMotorcycle) {
@@ -638,7 +670,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                         const motoData = await motoResponse.json()
                         const motorcycle = motoData.motorcycle
                         if (motorcycle) {
-                          itemName = `${motorcycle.brand} ${motorcycle.model}`
+                          itemName = motorcycle.name || `${motorcycle.brand || ''} ${motorcycle.model || ''}`.trim()
                           itemId = motorcycleId
                           // Restore sold quantity: current stock + quantity sold in this invoice
                           stockQuantity = (motorcycle.stockQuantity || 0) + originalQuantitySold
@@ -788,6 +820,9 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               hasItemId: !!item.itemId
             })))
             setItems(invoiceItems)
+            
+            // Store invoice type for later use in separate effect
+            setActualInvoiceIsMotorcycle(invoiceHasMotorcycle)
           } else {
             console.warn('Invoice has no items or items array is empty')
           }
@@ -988,40 +1023,123 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     }
   }
 
-  // Fetch products or motorcycles
-  React.useEffect(() => {
-    if (itemOpen) {
-      if (isProduct) {
-        fetchProducts()
+  // Fetch products or motorcycles per item when item name changes
+  const fetchItemProducts = React.useCallback(async (itemId: string, searchQuery: string) => {
+    // If search is empty and we're editing, fetch initial list (first 50 products)
+    // Otherwise, only fetch if there's a search query
+    if (!searchQuery || !searchQuery.trim()) {
+      // When editing, fetch initial list for new items
+      if (invoiceId) {
+        try {
+          const response = await fetch(`/api/products?pageSize=50`)
+          const data = await response.json()
+          if (data.products) {
+            setItemProducts(prev => ({ ...prev, [itemId]: data.products }))
+          }
+        } catch (error) {
+          console.error('Error fetching initial products:', error)
+          setItemProducts(prev => ({ ...prev, [itemId]: [] }))
+        }
       } else {
-        fetchMotorcycles()
+        setItemProducts(prev => ({ ...prev, [itemId]: [] }))
       }
+      return
     }
-  }, [itemOpen, itemSearch, isProduct])
-
-  const fetchProducts = async () => {
+    
     try {
-      const response = await fetch(`/api/products?search=${encodeURIComponent(itemSearch)}&pageSize=50`)
+      const response = await fetch(`/api/products?search=${encodeURIComponent(searchQuery)}&pageSize=50`)
       const data = await response.json()
       if (data.products) {
-        setProducts(data.products)
+        setItemProducts(prev => ({ ...prev, [itemId]: data.products }))
       }
     } catch (error) {
       console.error('Error fetching products:', error)
+      setItemProducts(prev => ({ ...prev, [itemId]: [] }))
     }
-  }
+  }, [invoiceId])
 
-  const fetchMotorcycles = async () => {
+  const fetchItemMotorcycles = React.useCallback(async (itemId: string, searchQuery: string) => {
+    // If search is empty and we're editing, fetch initial list (first 50 motorcycles)
+    // Otherwise, only fetch if there's a search query
+    if (!searchQuery || !searchQuery.trim()) {
+      // When editing, fetch initial list for new items
+      if (invoiceId) {
+        try {
+          const response = await fetch(`/api/motorcycles?pageSize=50`)
+          const data = await response.json()
+          if (data.motorcycles) {
+            setItemMotorcycles(prev => ({ ...prev, [itemId]: data.motorcycles }))
+          }
+        } catch (error) {
+          console.error('Error fetching initial motorcycles:', error)
+          setItemMotorcycles(prev => ({ ...prev, [itemId]: [] }))
+        }
+      } else {
+        setItemMotorcycles(prev => ({ ...prev, [itemId]: [] }))
+      }
+      return
+    }
+    
     try {
-      const response = await fetch(`/api/motorcycles?search=${encodeURIComponent(itemSearch)}&pageSize=50`)
+      const response = await fetch(`/api/motorcycles?search=${encodeURIComponent(searchQuery)}&pageSize=50`)
       const data = await response.json()
       if (data.motorcycles) {
-        setMotorcycles(data.motorcycles)
+        setItemMotorcycles(prev => ({ ...prev, [itemId]: data.motorcycles }))
       }
     } catch (error) {
       console.error('Error fetching motorcycles:', error)
+      setItemMotorcycles(prev => ({ ...prev, [itemId]: [] }))
     }
-  }
+  }, [invoiceId])
+
+  // CRITICAL: Load products/motorcycles for dropdown when editing invoice
+  // This runs after items are set and functions are defined
+  // Use a ref to track which items we've already fetched for to avoid duplicate fetches
+  const fetchedItemsRef = React.useRef<Set<string>>(new Set())
+  const itemsRef = React.useRef(items)
+  
+  // Update ref when items change
+  React.useEffect(() => {
+    itemsRef.current = items
+  }, [items])
+  
+  React.useEffect(() => {
+    if (!invoiceId || !invoiceLoadedRef.current) return
+    
+    const currentItems = itemsRef.current
+    
+    // Fetch products/motorcycles for each item to populate dropdowns
+    currentItems.forEach((item) => {
+      // Skip if we've already fetched for this item (to avoid duplicate fetches)
+      const itemKey = `${item.id}-${item.itemName || 'empty'}`
+      if (fetchedItemsRef.current.has(itemKey)) {
+        return
+      }
+      
+      // Use item.itemType directly to determine what to fetch
+      if (item.itemType === 'motorcycle') {
+        // For items with names, fetch based on the name; otherwise fetch initial list
+        if (item.itemName && item.itemName.trim()) {
+          fetchItemMotorcycles(item.id, item.itemName)
+        } else {
+          // New item without name - fetch initial list
+          fetchItemMotorcycles(item.id, '')
+        }
+        fetchedItemsRef.current.add(itemKey)
+      } else if (item.itemType === 'product') {
+        // For items with names, fetch based on the name; otherwise fetch initial list
+        if (item.itemName && item.itemName.trim()) {
+          fetchItemProducts(item.id, item.itemName)
+        } else {
+          // New item without name - fetch initial list
+          fetchItemProducts(item.id, '')
+        }
+        fetchedItemsRef.current.add(itemKey)
+      }
+    })
+    // Stable dependency array - items are accessed via ref to avoid array dependency issues
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceId, fetchItemProducts, fetchItemMotorcycles])
 
   // Calculate totals
   React.useEffect(() => {
@@ -1153,11 +1271,17 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
   // Add empty row - use useCallback to prevent recreation and functional update
   const handleAddRow = React.useCallback(() => {
     setItems(prevItems => {
+      // When editing, use actualInvoiceIsMotorcycle to determine item type
+      // Otherwise, use saleType prop
+      const isMotorcycleInvoice = invoiceId 
+        ? (actualInvoiceIsMotorcycle ?? isMotorcycle)
+        : isMotorcycle
+      
       const newItem: InvoiceItem = {
         id: `item-${Date.now()}-${Math.random()}`,
         itemId: null,
         itemName: "",
-        itemType: isProduct ? 'product' : 'motorcycle',
+        itemType: isMotorcycleInvoice ? 'motorcycle' : 'product',
         quantity: 0,
         rate: 0,
         amount: 0,
@@ -1165,9 +1289,31 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         isProductInDatabase: false,
         productNotFound: false,
       }
-      return [...prevItems, newItem]
+      
+      const newItems = [...prevItems, newItem]
+      
+      // Automatically fetch motorcycles/products for the new item when editing
+      // This ensures dropdown is populated immediately
+      if (invoiceId) {
+        // Use setTimeout to ensure state is updated first
+        setTimeout(() => {
+          if (newItem.itemType === 'motorcycle') {
+            // Fetch motorcycles with empty search to get initial list
+            fetchItemMotorcycles(newItem.id, '')
+            // Open dropdown to show fetched motorcycles
+            setItemOpen(prev => ({ ...prev, [newItem.id]: true }))
+          } else if (newItem.itemType === 'product') {
+            // Fetch products with empty search to get initial list
+            fetchItemProducts(newItem.id, '')
+            // Open dropdown to show fetched products
+            setItemOpen(prev => ({ ...prev, [newItem.id]: true }))
+          }
+        }, 150) // Small delay to ensure state is updated
+      }
+      
+      return newItems
     })
-  }, [isProduct])
+  }, [isProduct, isMotorcycle, invoiceId, actualInvoiceIsMotorcycle, fetchItemProducts, fetchItemMotorcycles])
 
   // Add item from database
   const handleAddItem = (item: Product | Motorcycle) => {
@@ -1179,7 +1325,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     const newItem: InvoiceItem = {
       id: `item-${Date.now()}`,
       itemId: item.id,
-      itemName: isProductItem ? item.name : `${item.brand} ${item.model}`,
+      itemName: isProductItem ? item.name : (item.name || `${(item as any).brand || ''} ${(item as any).model || ''}`.trim()),
       itemType: isProductItem ? 'product' : 'motorcycle',
       quantity: 0,
       rate: Number(price),
@@ -1203,7 +1349,6 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     
     setItems([...items, newItem])
     setItemOpen({})
-    setItemSearch("")
   }
   
   // Search for product or motorcycle when name is entered
@@ -1294,14 +1439,17 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
             // Try to find exact match first, then partial match
             const searchLower = itemName.toLowerCase()
             const foundMotorcycle = foundMotorcycles.find((m: Motorcycle) => {
-              const fullName = `${m.brand} ${m.model}`.toLowerCase()
+              // Use name if available, otherwise fallback to brand + model
+              const fullName = (m.name || `${(m as any).brand || ''} ${(m as any).model || ''}`).toLowerCase().trim()
               return fullName === searchLower || m.sku.toLowerCase() === searchLower
             }) || foundMotorcycles.find((m: Motorcycle) => {
-              const fullName = `${m.brand} ${m.model}`.toLowerCase()
+              // Use name if available, otherwise fallback to brand + model
+              const fullName = (m.name || `${(m as any).brand || ''} ${(m as any).model || ''}`).toLowerCase().trim()
               return fullName.includes(searchLower) || 
                      searchLower.includes(fullName) ||
-                     m.brand.toLowerCase().includes(searchLower) ||
-                     m.model.toLowerCase().includes(searchLower) ||
+                     m.name?.toLowerCase().includes(searchLower) ||
+                     ((m as any).brand?.toLowerCase().includes(searchLower)) ||
+                     ((m as any).model?.toLowerCase().includes(searchLower)) ||
                      m.sku.toLowerCase().includes(searchLower)
             })
             
@@ -1372,13 +1520,16 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     }
   }, [])
   
-  // Update item name and search for product/motorcycle - use functional update to avoid stale closure
+  // Debounced fetch refs for per-item
+  const fetchTimeoutsRef = React.useRef<{ [key: string]: NodeJS.Timeout }>({})
+  
+  // Update item name and fetch products/motorcycles for dropdown
   const handleUpdateItemName = React.useCallback((id: string, name: string) => {
     setItems(prevItems => {
       return prevItems.map(item => {
         if (item.id === id) {
           const updated = { ...item, itemName: name }
-          // If name changed, reset item status and search
+          // If name changed, reset item status
           if (name !== item.itemName) {
             updated.itemId = null
             updated.isProductInDatabase = false
@@ -1388,14 +1539,22 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               updated.rate = 0
               updated.quantity = 0
               updated.amount = 0
+              setItemProducts(prev => ({ ...prev, [id]: [] }))
+              setItemMotorcycles(prev => ({ ...prev, [id]: [] }))
             } else {
-              // Trigger search if name is not empty - use setTimeout to avoid blocking
-              // Only search if we're in the correct mode
-              if ((isProduct && item.itemType === 'product') || (isMotorcycle && item.itemType === 'motorcycle')) {
-                setTimeout(() => {
-                  searchItem(id, name)
-                }, 0)
+              // Clear previous timeout
+              if (fetchTimeoutsRef.current[id]) {
+                clearTimeout(fetchTimeoutsRef.current[id])
               }
+              // Debounce fetch - wait 300ms after user stops typing
+              // Use item.itemType directly (not saleType) to ensure correct fetch
+              fetchTimeoutsRef.current[id] = setTimeout(() => {
+                if (item.itemType === 'product') {
+                  fetchItemProducts(id, name)
+                } else if (item.itemType === 'motorcycle') {
+                  fetchItemMotorcycles(id, name)
+                }
+              }, 300)
             }
           }
           return updated
@@ -1403,39 +1562,73 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         return item
       })
     })
-  }, [searchItem, isProduct, isMotorcycle])
+  }, [isProduct, isMotorcycle, fetchItemProducts, fetchItemMotorcycles])
 
   // Update item
   const handleUpdateItem = (id: string, field: 'quantity' | 'rate', value: number) => {
-    setItems(prevItems => prevItems.map(item => {
-      if (item.id === id) {
-        const updated = { ...item, [field]: value }
-        
-        // Validate quantity against available stock if stockQuantity is set
-        if (field === 'quantity' && updated.stockQuantity !== undefined && updated.stockQuantity !== null) {
-          if (value > updated.stockQuantity) {
-            setAlertDialog({
-              open: true,
-              type: 'error',
-              title: t('insufficientStock'),
-              message: t('availableStock', { quantity: updated.stockQuantity, name: updated.itemName }),
-            })
-            // Set quantity to available stock
-            updated.quantity = updated.stockQuantity
+    setItems(prevItems => {
+      const updatedItems = prevItems.map(item => {
+        if (item.id === id) {
+          const updated = { ...item, [field]: value }
+          
+          // Validate quantity against available stock (calculated dynamically)
+          if (field === 'quantity' && updated.stockQuantity !== undefined && updated.stockQuantity !== null) {
+            // Calculate available stock: original stock minus quantities from other items of same product
+            const totalQuantityInInvoice = prevItems
+              .filter(i => i.itemId === updated.itemId && i.itemType === updated.itemType && i.id !== id)
+              .reduce((sum, i) => sum + (i.quantity || 0), 0)
+            const otherItemsQuantity = totalQuantityInInvoice
+            const availableStock = Math.max(0, updated.stockQuantity - otherItemsQuantity)
+            
+            if (value > availableStock) {
+              setAlertDialog({
+                open: true,
+                type: 'error',
+                title: t('insufficientStock'),
+                message: t('availableStock', { quantity: availableStock, name: updated.itemName }),
+              })
+              // Set quantity to available stock
+              updated.quantity = availableStock
+            }
           }
+          
+          updated.amount = updated.quantity * updated.rate
+          return updated
         }
-        
-        updated.amount = updated.quantity * updated.rate
-        return updated
-      }
-      return item
-    }))
+        return item
+      })
+      return updatedItems
+    })
   }
 
   // Remove item
   const handleRemoveItem = (id: string) => {
     setItems(items.filter(item => item.id !== id))
   }
+
+  // Calculate available stock for an item (original stock minus quantities already in invoice)
+  const calculateAvailableStock = React.useCallback((item: InvoiceItem): number | undefined => {
+    if (item.stockQuantity === undefined || item.stockQuantity === null) {
+      return undefined
+    }
+    
+    // If item doesn't have an itemId, we can't calculate (not selected from database)
+    if (!item.itemId) {
+      return item.stockQuantity
+    }
+    
+    // Sum all quantities for the same product/motorcycle in the invoice
+    const totalQuantityInInvoice = items
+      .filter(i => i.itemId === item.itemId && i.itemType === item.itemType)
+      .reduce((sum, i) => sum + (i.quantity || 0), 0)
+    
+    // Available stock = original stock - (total quantity in invoice - current item quantity)
+    // This gives us: original stock - quantities from other items of the same product
+    const otherItemsQuantity = totalQuantityInInvoice - (item.quantity || 0)
+    const availableStock = Math.max(0, item.stockQuantity - otherItemsQuantity)
+    
+    return availableStock
+  }, [items])
 
   // Format IQD amount without decimals
   const formatIqd = (amount: number): string => {
@@ -1575,6 +1768,111 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
         const result = await response.json()
         
         if (result.invoice) {
+          // CRITICAL: Reload invoice data to get updated stock quantities
+          // After saving, stock has been updated in the database, so we need to refresh
+          // Reset the ref to allow reloading
+          invoiceLoadedRef.current = false
+          
+          // Reload invoice data to get fresh stock quantities
+          try {
+            const reloadResponse = await fetch(`/api/invoices/${invoiceId}`)
+            if (reloadResponse.ok) {
+              const reloadData = await reloadResponse.json()
+              const reloadedInvoice = reloadData.invoice
+              
+              // Update items with fresh stock quantities from database
+              if (reloadedInvoice.items && reloadedInvoice.items.length > 0) {
+                setItems(prevItems => {
+                  return prevItems.map(prevItem => {
+                    // Find matching item in reloaded invoice
+                    const reloadedItem = reloadedInvoice.items.find((ri: any) => {
+                      if (prevItem.itemType === 'motorcycle') {
+                        // For motorcycles, match by notes (MOTORCYCLE:id)
+                        return ri.notes?.startsWith('MOTORCYCLE:') && 
+                               ri.notes.replace('MOTORCYCLE:', '') === prevItem.itemId
+                      } else {
+                        // For products, match by productId
+                        return ri.productId === prevItem.itemId
+                      }
+                    })
+                    
+                    if (reloadedItem) {
+                      // Update stock quantity from database
+                      // For products, get from product relation
+                      // For motorcycles, we need to fetch separately
+                      let updatedStockQuantity = prevItem.stockQuantity
+                      
+                      if (prevItem.itemType === 'product' && reloadedItem.product) {
+                        // Product: use stock from product relation
+                        // When editing, we need to add back the quantity sold in this invoice
+                        // to show the restored stock (available stock for editing)
+                        updatedStockQuantity = reloadedItem.product.stockQuantity + reloadedItem.quantity
+                      } else if (prevItem.itemType === 'motorcycle') {
+                        // Motorcycle: fetch fresh stock (product relation won't have it)
+                        // We'll update this in a separate effect to avoid blocking
+                        // For now, keep the current stockQuantity
+                      }
+                      
+                      return {
+                        ...prevItem,
+                        stockQuantity: updatedStockQuantity,
+                      }
+                    }
+                    return prevItem
+                  })
+                })
+                
+                // For motorcycles, fetch fresh stock quantities
+                // Get current items to find motorcycles
+                setItems(currentItems => {
+                  const motorcycleItems = currentItems.filter(item => item.itemType === 'motorcycle' && item.itemId)
+                  if (motorcycleItems.length > 0) {
+                    // Fetch motorcycle stock in parallel
+                    Promise.all(
+                      motorcycleItems.map(async (item) => {
+                        if (!item.itemId) return null
+                        try {
+                          const motoResponse = await fetch(`/api/motorcycles/${item.itemId}`)
+                          if (motoResponse.ok) {
+                            const motoData = await motoResponse.json()
+                            const reloadedMotoItem = reloadedInvoice.items.find((ri: any) => 
+                              ri.notes?.startsWith('MOTORCYCLE:') && 
+                              ri.notes.replace('MOTORCYCLE:', '') === item.itemId
+                            )
+                            // Get current stock and add back quantity sold in this invoice (for editing)
+                            const currentStock = motoData.motorcycle?.stockQuantity || 0
+                            const restoredStock = currentStock + (reloadedMotoItem?.quantity || 0)
+                            return { itemId: item.id, stockQuantity: restoredStock }
+                          }
+                        } catch (error) {
+                          console.error(`Error fetching motorcycle ${item.itemId}:`, error)
+                        }
+                        return null
+                      })
+                    ).then(stockUpdates => {
+                      setItems(prevItems => {
+                        return prevItems.map(prevItem => {
+                          const stockUpdate = stockUpdates.find(su => su?.itemId === prevItem.id)
+                          if (stockUpdate) {
+                            return {
+                              ...prevItem,
+                              stockQuantity: stockUpdate.stockQuantity,
+                            }
+                          }
+                          return prevItem
+                        })
+                      })
+                    })
+                  }
+                  return currentItems
+                })
+              }
+            }
+          } catch (reloadError) {
+            console.error('Error reloading invoice after save:', reloadError)
+            // Don't fail the save operation if reload fails
+          }
+          
           setAlertDialog({
             open: true,
             type: 'success',
@@ -1703,8 +2001,15 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
     const stockErrors: string[] = []
     for (const item of items) {
       if (item.itemId && item.stockQuantity !== undefined && item.stockQuantity !== null) {
-        if (item.quantity > item.stockQuantity) {
-          stockErrors.push(`${item.itemName}: Requested ${item.quantity}, but only ${item.stockQuantity} available`)
+        // Calculate available stock: original stock minus quantities from other items of same product
+        const totalQuantityInInvoice = items
+          .filter(i => i.itemId === item.itemId && i.itemType === item.itemType && i.id !== item.id)
+          .reduce((sum, i) => sum + (i.quantity || 0), 0)
+        const otherItemsQuantity = totalQuantityInInvoice
+        const availableStock = Math.max(0, item.stockQuantity - otherItemsQuantity)
+        
+        if (item.quantity > availableStock) {
+          stockErrors.push(`${item.itemName}: Requested ${item.quantity}, but only ${availableStock} available`)
         }
       }
     }
@@ -1980,9 +2285,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
+        <Tabs 
+          value={activeTab} 
+          onValueChange={setActiveTab} 
+          className="flex h-full flex-col"
+        >
           <div className="flex-1 overflow-y-auto p-4" style={{ overflow: 'visible' }}>
-            <TabsContent value="details" className="space-y-4 mt-0" style={{ overflow: 'visible' }}>
+            <TabsContent value="details" className="space-y-4 mt-0" style={{ overflow: 'visible' }} suppressHydrationWarning>
               {/* Series & Customer - Compact */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -2208,7 +2517,17 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               <div className="space-y-4 border-t pt-6">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold">{t('items')}</h3>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="price-aware"
+                        checked={priceAwareEnabled}
+                        onCheckedChange={setPriceAwareEnabled}
+                      />
+                      <Label htmlFor="price-aware" className={cn("text-sm cursor-pointer", fontClass)}>
+                        نرخ كێشکردن
+                      </Label>
+                    </div>
                     <Button 
                       variant="default" 
                       size="sm" 
@@ -2231,17 +2550,17 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                         {t('createNewMotorcycle')}
                       </Button>
                     ) : (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={() => {
-                        setProductDialogData(null)
-                        setProductDialogOpen(true)
-                      }}
-                    >
-                      <IconPlus className="h-4 w-4 mr-2" />
-                      {t('createNewProduct')}
-                    </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => {
+                          setProductDialogData(null)
+                          setProductDialogOpen(true)
+                        }}
+                      >
+                        <IconPlus className="h-4 w-4 mr-2" />
+                        {t('createNewProduct')}
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -2288,7 +2607,19 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                       }
                                     }}
                                     onFocus={() => {
-                                      if (item.itemName) {
+                                      // When editing, fetch items when input is focused (even if itemName is empty)
+                                      if (invoiceId) {
+                                        // Fetch items based on itemType
+                                        if (item.itemType === 'motorcycle') {
+                                          // Fetch motorcycles - use empty string to get initial list
+                                          fetchItemMotorcycles(item.id, '')
+                                        } else if (item.itemType === 'product') {
+                                          // Fetch products - use empty string to get initial list
+                                          fetchItemProducts(item.id, '')
+                                        }
+                                      }
+                                      // Open dropdown if there's a name or if we're editing (to show fetched items)
+                                      if (item.itemName || invoiceId) {
                                         setItemOpen(prev => ({ ...prev, [item.id]: true }))
                                       }
                                     }}
@@ -2300,7 +2631,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                     }}
                                     className="flex-1"
                                   />
-                                  {isProduct && (
+                                  {item.itemType === 'product' && (
                                     <Popover 
                                       open={categoryPopoverOpen[item.id] || false} 
                                       onOpenChange={(open) => {
@@ -2407,6 +2738,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                                   isProductInDatabase: true,
                                                                   productNotFound: false,
                                                                   quantity: 0,
+                                                                  originalPrice: priceValue, // Store original price for comparison
                                                                 }
                                                                 updatedItem.amount = updatedItem.quantity * updatedItem.rate
                                                                 return updatedItem
@@ -2429,17 +2761,174 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                       </PopoverContent>
                                     </Popover>
                                   )}
+                                  {item.itemType === 'motorcycle' && (
+                                    <Popover 
+                                      open={motorcycleCategoryPopoverOpen[item.id] || false} 
+                                      onOpenChange={(open) => {
+                                        setMotorcycleCategoryPopoverOpen(prev => ({ ...prev, [item.id]: open }))
+                                        if (!open) {
+                                          // Reset view state when popover closes
+                                          setMotorcycleCategoryViewState(prev => ({ ...prev, [item.id]: 'categories' }))
+                                          setCategoryMotorcycleSearch(prev => ({ ...prev, [item.id]: '' }))
+                                        }
+                                      }}
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          className={cn("h-9", fontClass)}
+                                        >
+                                          پۆل
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-[300px] p-0" align="start">
+                                        {(motorcycleCategoryViewState[item.id] || 'categories') === 'categories' ? (
+                                          <Command>
+                                            <CommandInput placeholder="گەڕان بە پۆل..." />
+                                            <CommandList>
+                                              <CommandEmpty>هیچ پۆلێک نەدۆزرایەوە</CommandEmpty>
+                                              <CommandGroup>
+                                                {motorcycleCategories.map((category) => (
+                                                  <CommandItem
+                                                    key={category.id}
+                                                    value={category.id}
+                                                    onSelect={() => {
+                                                      // Fetch motorcycles by category and switch to motorcycles view
+                                                      fetch(`/api/motorcycles?categoryId=${category.id}&pageSize=100`)
+                                                        .then(res => res.json())
+                                                        .then(data => {
+                                                          if (data.motorcycles) {
+                                                            setSelectedCategoryMotorcycles(prev => ({ ...prev, [item.id]: data.motorcycles || [] }))
+                                                            setSelectedMotorcycleCategoryId(prev => ({ ...prev, [item.id]: category.id }))
+                                                            setMotorcycleCategoryViewState(prev => ({ ...prev, [item.id]: 'motorcycles' }))
+                                                            setCategoryMotorcycleSearch(prev => ({ ...prev, [item.id]: '' }))
+                                                          }
+                                                        })
+                                                        .catch(console.error)
+                                                    }}
+                                                  >
+                                                    {category.name}
+                                                  </CommandItem>
+                                                ))}
+                                              </CommandGroup>
+                                            </CommandList>
+                                          </Command>
+                                        ) : (
+                                          <Command>
+                                            <div className="flex items-center border-b px-2">
+                                              <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-8 w-8 p-0"
+                                                onClick={() => {
+                                                  setMotorcycleCategoryViewState(prev => ({ ...prev, [item.id]: 'categories' }))
+                                                  setCategoryMotorcycleSearch(prev => ({ ...prev, [item.id]: '' }))
+                                                }}
+                                              >
+                                                <IconArrowLeft className="h-4 w-4" />
+                                              </Button>
+                                              <CommandInput 
+                                                placeholder="گەڕان بە مۆتۆرسیکل..." 
+                                                value={categoryMotorcycleSearch[item.id] || ''}
+                                                onValueChange={(value) => {
+                                                  setCategoryMotorcycleSearch(prev => ({ ...prev, [item.id]: value }))
+                                                }}
+                                              />
+                                            </div>
+                                            <CommandList>
+                                              <CommandEmpty>هیچ مۆتۆرسیکلێک نەدۆزرایەوە</CommandEmpty>
+                                              <CommandGroup>
+                                                {(selectedCategoryMotorcycles[item.id] || [])
+                                                  .filter(motorcycle => {
+                                                    const search = (categoryMotorcycleSearch[item.id] || '').toLowerCase()
+                                                    const displayName = (motorcycle.name || `${(motorcycle as any).brand || ''} ${(motorcycle as any).model || ''}`.trim()).toLowerCase()
+                                                    return !search || 
+                                                      displayName.includes(search) ||
+                                                      motorcycle.sku.toLowerCase().includes(search)
+                                                  })
+                                                  .map((motorcycle) => {
+                                                    const motorcyclePrice = isWholesale ? motorcycle.usdWholesalePrice : motorcycle.usdRetailPrice
+                                                    const priceValue = typeof motorcyclePrice === 'string' ? parseFloat(motorcyclePrice) || 0 : motorcyclePrice || 0
+                                                    const displayName = motorcycle.name || `${(motorcycle as any).brand || ''} ${(motorcycle as any).model || ''}`.trim()
+                                                    return (
+                                                      <CommandItem
+                                                        key={motorcycle.id}
+                                                        value={motorcycle.id}
+                                                        onSelect={() => {
+                                                          // Update item when motorcycle is manually selected
+                                                          setItems(prevItems => {
+                                                            return prevItems.map(prevItem => {
+                                                              if (prevItem.id === item.id) {
+                                                                // Only update rate if:
+                                                                // 1. Item doesn't have an itemId yet (new item), OR
+                                                                // 2. Item has a different itemId (switching to different motorcycle), OR
+                                                                // 3. Rate is 0 (not set yet)
+                                                                // Otherwise, preserve the user's manually set rate
+                                                                const isNewItem = !prevItem.itemId
+                                                                const isSwitchingItem = prevItem.itemId && prevItem.itemId !== motorcycle.id
+                                                                const rateNotSet = prevItem.rate === 0
+                                                                const shouldUpdateRate = isNewItem || isSwitchingItem || rateNotSet
+                                                                
+                                                                const updatedItem = {
+                                                                  ...prevItem,
+                                                                  itemName: displayName,
+                                                                  // Only update rate if conditions above are met, otherwise preserve user's manual changes
+                                                                  rate: shouldUpdateRate ? priceValue : prevItem.rate,
+                                                                  itemId: motorcycle.id,
+                                                                  stockQuantity: motorcycle.stockQuantity, // Store stock quantity
+                                                                  isProductInDatabase: true,
+                                                                  productNotFound: false,
+                                                                  // Keep existing quantity (same as products) - don't reset to 0
+                                                                  quantity: prevItem.quantity || 0,
+                                                                  originalPrice: priceValue, // Store original price for comparison
+                                                                }
+                                                                // Validate quantity against stock (same as products)
+                                                                if (updatedItem.quantity > motorcycle.stockQuantity) {
+                                                                  setAlertDialog({
+                                                                    open: true,
+                                                                    type: 'error',
+                                                                    title: t('insufficientStock'),
+                                                                    message: t('availableStockFor', { name: displayName, quantity: motorcycle.stockQuantity, current: updatedItem.quantity }),
+                                                                  })
+                                                                  updatedItem.quantity = motorcycle.stockQuantity
+                                                                }
+                                                                // Calculate amount: quantity * rate
+                                                                updatedItem.amount = updatedItem.quantity * updatedItem.rate
+                                                                return updatedItem
+                                                              }
+                                                              return prevItem
+                                                            })
+                                                          })
+                                                          setItemOpen(prev => ({ ...prev, [item.id]: false }))
+                                                          setMotorcycleCategoryPopoverOpen(prev => ({ ...prev, [item.id]: false }))
+                                                        }}
+                                                      >
+                                                        <div className="flex items-center justify-between">
+                                                          <span>{displayName} ({motorcycle.sku}) - {priceValue} USD</span>
+                                                          <span className={cn(
+                                                            "text-xs ml-2",
+                                                            motorcycle.stockQuantity > 0 ? "text-muted-foreground" : "text-destructive font-medium"
+                                                          )}>
+                                                            {t('stock')}: {motorcycle.stockQuantity}
+                                                          </span>
+                                                        </div>
+                                                      </CommandItem>
+                                                    )
+                                                  })}
+                                              </CommandGroup>
+                                            </CommandList>
+                                          </Command>
+                                        )}
+                                      </PopoverContent>
+                                    </Popover>
+                                  )}
                                 </div>
-                                {isProduct && (itemOpen[item.id] || false) && item.itemName && products.length > 0 && (
+                                {item.itemType === 'product' && (itemOpen[item.id] || false) && (item.itemName || invoiceId) && (itemProducts[item.id] || []).length > 0 && (
                                   <div className="w-full mt-1 bg-popover border rounded-md shadow-lg">
                                     <div className="p-1">
-                                      {products
-                                        .filter(p => 
-                                          p.name.toLowerCase().includes(item.itemName.toLowerCase()) ||
-                                          p.sku.toLowerCase().includes(item.itemName.toLowerCase())
-                                        )
-                                        .slice(0, 5)
-                                        .map((product) => {
+                                      {(itemProducts[item.id] || []).slice(0, 10).map((product) => {
                                           const productPrice = isWholesale ? product.jumlaPrice : product.mufradPrice
                                           const priceValue = typeof productPrice === 'string' ? parseFloat(productPrice) || 0 : productPrice || 0
                                           return (
@@ -2472,6 +2961,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                         isProductInDatabase: true,
                                                         productNotFound: false,
                                                         quantity: 0, // Reset quantity to 0 when product is selected
+                                                        originalPrice: priceValue, // Store original price for comparison
                                                       }
                                                       // Calculate amount: quantity * rate (will be 0 since quantity is 0)
                                                       updatedItem.amount = updatedItem.quantity * updatedItem.rate
@@ -2498,22 +2988,13 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                     </div>
                                   </div>
                                 )}
-                                {isMotorcycle && (itemOpen[item.id] || false) && item.itemName && motorcycles.length > 0 && (
+                                {item.itemType === 'motorcycle' && (itemOpen[item.id] || false) && (item.itemName || invoiceId) && (itemMotorcycles[item.id] || []).length > 0 && (
                                   <div className="w-full mt-1 bg-popover border rounded-md shadow-lg">
                                     <div className="p-1">
-                                      {motorcycles
-                                        .filter(m => {
-                                          const fullName = `${m.brand} ${m.model}`.toLowerCase()
-                                          return fullName.includes(item.itemName.toLowerCase()) ||
-                                            m.sku.toLowerCase().includes(item.itemName.toLowerCase()) ||
-                                            m.brand.toLowerCase().includes(item.itemName.toLowerCase()) ||
-                                            m.model.toLowerCase().includes(item.itemName.toLowerCase())
-                                        })
-                                        .slice(0, 5)
-                                        .map((motorcycle) => {
+                                      {(itemMotorcycles[item.id] || []).slice(0, 10).map((motorcycle) => {
                                           const motorcyclePrice = isWholesale ? motorcycle.usdWholesalePrice : motorcycle.usdRetailPrice
                                           const priceValue = typeof motorcyclePrice === 'string' ? parseFloat(motorcyclePrice) || 0 : motorcyclePrice || 0
-                                          const displayName = `${motorcycle.brand} ${motorcycle.model}`
+                                          const displayName = motorcycle.name || `${motorcycle.brand || ''} ${motorcycle.model || ''}`.trim()
                                           return (
                                             <div
                                               key={motorcycle.id}
@@ -2542,9 +3023,20 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                                         stockQuantity: motorcycle.stockQuantity, // Store stock quantity
                                                         isProductInDatabase: true,
                                                         productNotFound: false,
-                                                        quantity: 0, // Reset quantity to 0 when motorcycle is selected
+                                                        // Keep existing quantity (same as products) - don't reset to 0
+                                                        quantity: prevItem.quantity || 0,
                                                       }
-                                                      // Calculate amount: quantity * rate (will be 0 since quantity is 0)
+                                                      // Validate quantity against stock (same as products)
+                                                      if (updatedItem.quantity > motorcycle.stockQuantity) {
+                                                        setAlertDialog({
+                                                          open: true,
+                                                          type: 'error',
+                                                          title: t('insufficientStock'),
+                                                          message: t('availableStockFor', { name: displayName, quantity: motorcycle.stockQuantity, current: updatedItem.quantity }),
+                                                        })
+                                                        updatedItem.quantity = motorcycle.stockQuantity
+                                                      }
+                                                      // Calculate amount: quantity * rate
                                                       updatedItem.amount = updatedItem.quantity * updatedItem.rate
                                                       return updatedItem
                                                     }
@@ -2606,7 +3098,10 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                 <Input
                                   type="number"
                                   min="0"
-                                  max={item.stockQuantity !== undefined ? item.stockQuantity : undefined}
+                                  max={(() => {
+                                    const availableStock = calculateAvailableStock(item)
+                                    return availableStock !== undefined ? availableStock : undefined
+                                  })()}
                                   value={item.quantity || ''}
                                   onChange={(e) =>
                                     handleUpdateItem(item.id, 'quantity', parseInt(e.target.value) || 0)
@@ -2614,19 +3109,26 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                   className={cn(
                                     "w-24 text-right",
                                     (item.quantity === 0 || item.quantity === null || item.quantity === undefined) && "border-destructive focus:border-destructive focus:ring-destructive",
-                                    item.stockQuantity !== undefined && item.quantity > item.stockQuantity && "border-destructive"
+                                    (() => {
+                                      const availableStock = calculateAvailableStock(item)
+                                      return availableStock !== undefined && item.quantity > availableStock
+                                    })() && "border-destructive"
                                   )}
                                 />
-                                {item.stockQuantity !== undefined && item.stockQuantity !== null && (
-                                  <div className={cn(
-                                    "text-xs text-right w-full",
-                                    item.quantity > item.stockQuantity ? "text-destructive font-medium" : "text-muted-foreground"
-                                  )}>
-                                    {item.quantity > item.stockQuantity
-                                      ? t('exceedsBy', { amount: item.quantity - item.stockQuantity })
-                                      : `${t('available')}: ${item.stockQuantity} ${t('stock')}`}
-                                  </div>
-                                )}
+                                {(() => {
+                                  const availableStock = calculateAvailableStock(item)
+                                  if (availableStock === undefined || availableStock === null) return null
+                                  return (
+                                    <div className={cn(
+                                      "text-xs text-right w-full",
+                                      item.quantity > availableStock ? "text-destructive font-medium" : "text-muted-foreground"
+                                    )}>
+                                      {item.quantity > availableStock
+                                        ? t('exceedsBy', { amount: item.quantity - availableStock })
+                                        : `${t('available')}: ${availableStock} ${t('stock')}`}
+                                    </div>
+                                  )
+                                })()}
                               </div>
                             </TableCell>
                             <TableCell className="align-top">
@@ -2641,8 +3143,8 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                   }
                                   className={cn(
                                     "w-32 text-right",
-                                    item.originalPrice !== undefined && item.originalPrice !== null && item.rate < item.originalPrice && "border-yellow-500 focus:border-yellow-500 focus:ring-yellow-500/50",
-                                    item.originalPrice !== undefined && item.originalPrice !== null && item.rate > item.originalPrice && "border-purple-500 focus:border-purple-500 focus:ring-purple-500/50"
+                                    priceAwareEnabled && item.originalPrice !== undefined && item.originalPrice !== null && item.rate < item.originalPrice && "border-yellow-500 focus:border-yellow-500 focus:ring-yellow-500/50",
+                                    priceAwareEnabled && item.originalPrice !== undefined && item.originalPrice !== null && item.rate > item.originalPrice && "border-purple-500 focus:border-purple-500 focus:ring-purple-500/50"
                                   )}
                                 />
                               </div>
@@ -2652,11 +3154,18 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                                 <div className="font-semibold text-right text-base">
                                   {getCurrencySymbol()}{formatCurrency(item.amount)}
                                 </div>
-                                {item.stockQuantity !== undefined && item.quantity > item.stockQuantity && (
-                                  <div className="text-xs text-destructive font-medium text-right">
-                                    Exceeds stock!
-                                  </div>
-                                )}
+                                {(() => {
+                                  const availableStock = calculateAvailableStock(item)
+                                  if (availableStock === undefined || availableStock === null) return null
+                                  if (item.quantity > availableStock) {
+                                    return (
+                                      <div className="text-xs text-destructive font-medium text-right">
+                                        Exceeds stock!
+                                      </div>
+                                    )
+                                  }
+                                  return null
+                                })()}
                               </div>
                             </TableCell>
                             <TableCell className="align-top">
@@ -2776,13 +3285,56 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
                           const numericValue = parseFloat(inputValue)
                           // Only update if it's a valid number
                           if (!isNaN(numericValue) && numericValue >= 0) {
-                            setTotalAdvance(numericValue)
+                            // Calculate maximum allowed payment
+                            // When editing, customerCurrentDebt already includes the original invoice's amountDue
+                            // So we need to subtract it first, then add the new invoice amount
+                            const balanceBeforeInvoice = invoiceId 
+                              ? customerCurrentDebt - originalInvoiceAmountDue 
+                              : customerCurrentDebt
+                            // Maximum payment = balance before invoice + grand total (to ensure balance never goes below 0)
+                            const maxAllowedPayment = balanceBeforeInvoice + grandTotal
+                            
+                            // Prevent payment from exceeding maximum (which would make balance negative)
+                            if (numericValue > maxAllowedPayment) {
+                              toast({
+                                title: t('paymentExceedsDebt'),
+                                description: locale === 'ku' 
+                                  ? `زیاتر لە باڵانسی ئستای کڕیاڕ نابێت بدرێت. کۆی قەرز: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`
+                                  : locale === 'ar'
+                                  ? `لا يمكن الدفع أكثر من الدين. إجمالي الدين: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`
+                                  : `Cannot pay more than debt. Total debt: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`,
+                                variant: "destructive",
+                              })
+                              setTotalAdvance(maxAllowedPayment)
+                            } else {
+                              setTotalAdvance(numericValue)
+                            }
                           }
                         }}
                         onBlur={(e) => {
-                          // On blur, ensure empty field shows 0
+                          // On blur, ensure empty field shows 0 and validate max payment
                           if (e.target.value === '' || e.target.value === null) {
                             setTotalAdvance(0)
+                          } else {
+                            const numericValue = parseFloat(e.target.value)
+                            if (!isNaN(numericValue)) {
+                              const balanceBeforeInvoice = invoiceId 
+                                ? customerCurrentDebt - originalInvoiceAmountDue 
+                                : customerCurrentDebt
+                              const maxAllowedPayment = balanceBeforeInvoice + grandTotal
+                              if (numericValue > maxAllowedPayment) {
+                                setTotalAdvance(maxAllowedPayment)
+                                toast({
+                                  title: t('paymentExceedsDebt'),
+                                  description: locale === 'ku' 
+                                    ? `زیاتر لە باڵانسی ئستای کڕیاڕ نابێت بدرێت. کۆی قەرز: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`
+                                    : locale === 'ar'
+                                    ? `لا يمكن الدفع أكثر من الدين. إجمالي الدين: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`
+                                    : `Cannot pay more than debt. Total debt: ${formatCurrency(balanceBeforeInvoice + grandTotal)}`,
+                                  variant: "destructive",
+                                })
+                              }
+                            }
                           }
                         }}
                         placeholder="0"
@@ -2917,8 +3469,10 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           const savedItemId = productDialogData?.itemId
           const savedItemName = productDialogData?.name
           
-          // Refresh products list
-          await fetchProducts()
+          // Refresh products list for the item if it exists
+          if (savedItemId && savedItemName) {
+            await fetchItemProducts(savedItemId, savedItemName)
+          }
           
           // Update the item with the newly created product's data (only if opened from an item)
           if (savedItemId && savedItemName) {
@@ -2988,6 +3542,7 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
           setProductDialogData(null)
         }}
         categories={categories}
+        onCategoriesChange={fetchCategories}
         product={productDialogData ? {
           id: '', // Empty ID = new product
           name: productDialogData.name,
@@ -3016,9 +3571,16 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
               setMotorcycleDialogData(null)
             }
           }}
-          onSuccess={() => {
-            // Refresh motorcycles
-            fetchMotorcycles()
+          onSuccess={async () => {
+            // Store the item ID and name before closing dialog
+            const savedItemId = motorcycleDialogData?.itemId
+            const savedItemName = motorcycleDialogData?.name
+            
+            // Refresh motorcycles list for the item if it exists
+            if (savedItemId && savedItemName) {
+              await fetchItemMotorcycles(savedItemId, savedItemName)
+            }
+            
             // Update the item to mark it as in database (only if opened from an item)
             if (motorcycleDialogData?.itemId) {
               setItems(currentItems => currentItems.map(item => {
@@ -3035,24 +3597,23 @@ export function SalesInvoiceForm({ tabId, saleType, locale, invoiceId, onDraftId
             setMotorcycleDialogOpen(false)
             setMotorcycleDialogData(null)
           }}
+          categories={motorcycleCategories}
+          onCategoriesChange={fetchMotorcycleCategories}
           motorcycle={motorcycleDialogData ? {
             id: '', // Empty ID = new motorcycle
-            brand: motorcycleDialogData.name.split(' ')[0] || '',
-            model: motorcycleDialogData.name.split(' ').slice(1).join(' ') || motorcycleDialogData.name,
+            name: motorcycleDialogData.name,
             sku: '',
-            year: null,
-            engineSize: null,
-            vin: null,
-            color: null,
             image: null,
             attachment: null,
             usdRetailPrice: motorcycleDialogData.price,
             usdWholesalePrice: motorcycleDialogData.price,
             rmbPrice: null,
             stockQuantity: 0,
-            lowStockThreshold: 0,
+            lowStockThreshold: 10,
             status: 'IN_STOCK',
             notes: null,
+            categoryId: null,
+            category: null,
           } : null}
         />
       )}

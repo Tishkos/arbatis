@@ -42,7 +42,7 @@ export function ChartAreaInteractive() {
   const direction = getTextDirection(locale as 'ku' | 'en' | 'ar')
   const isMobile = useIsMobile()
   const [timeRange, setTimeRange] = React.useState("90d")
-  const [currency, setCurrency] = React.useState("all") // all, USD, IQD
+  const [currency, setCurrency] = React.useState("IQD") // USD, IQD
   const [chartData, setChartData] = React.useState<Array<{ date: string; iqd: number; usd: number }>>([])
   const [loading, setLoading] = React.useState(true)
 
@@ -92,7 +92,7 @@ export function ChartAreaInteractive() {
       dateDisplay: dateObj.toLocaleDateString(locale === 'ku' ? 'en-US' : locale, { month: 'short', day: 'numeric' }),
       iqd: item.iqd,
       usd: item.usd,
-      sales: currency === 'all' ? (item.iqd + (item.usd * 1500)) : (currency === 'IQD' ? item.iqd : item.usd), // Approximate USD to IQD conversion when showing all
+      sales: currency === 'IQD' ? item.iqd : item.usd,
     }
   }).sort((a, b) => a.date.localeCompare(b.date)) // Sort by date ascending
 
@@ -132,7 +132,6 @@ export function ChartAreaInteractive() {
             variant="outline"
             className="hidden *:data-[slot=toggle-group-item]:!px-4 @[767px]/card:flex"
           >
-            <ToggleGroupItem value="all" className={fontClass}>{t('all')}</ToggleGroupItem>
             <ToggleGroupItem value="IQD" className={fontClass}>{t('iqd')}</ToggleGroupItem>
             <ToggleGroupItem value="USD" className={fontClass}>{t('usd')}</ToggleGroupItem>
           </ToggleGroup>
@@ -141,10 +140,9 @@ export function ChartAreaInteractive() {
               className={cn("flex w-40 **:data-[slot=select-value]:block **:data-[slot=select-value]:truncate @[767px]/card:hidden", fontClass)}
               size="sm"
             >
-              <SelectValue placeholder={t('all')} />
+              <SelectValue placeholder={t('iqd')} />
             </SelectTrigger>
             <SelectContent className="rounded-xl">
-              <SelectItem value="all" className="rounded-lg">{t('all')}</SelectItem>
               <SelectItem value="IQD" className="rounded-lg">{t('iqd')}</SelectItem>
               <SelectItem value="USD" className="rounded-lg">{t('usd')}</SelectItem>
             </SelectContent>
@@ -226,13 +224,7 @@ export function ChartAreaInteractive() {
                 content={
                   <ChartTooltipContent
                     formatter={(value: any, name: any, item: any, index: any, payload: any) => {
-                      const data = payload?.payload || item?.payload || payload
-                      if (currency === 'all' && data) {
-                        return [
-                          `${t('iqd')}: ${(data.iqd || 0).toLocaleString('en-US')} ع.د, ${t('usd')}: $${(data.usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-                          t('totalSales')
-                        ]
-                      } else if (currency === 'IQD') {
+                      if (currency === 'IQD') {
                         return [`${Number(value).toLocaleString('en-US')} ع.د`, t('iqd')]
                       } else {
                         return [`$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, t('usd')]
@@ -242,31 +234,12 @@ export function ChartAreaInteractive() {
                   />
                 }
               />
-              {currency === 'all' ? (
-                <>
-                  <Area
-                    dataKey="iqd"
-                    type="natural"
-                    fill="url(#fillIQD)"
-                    stroke="var(--color-iqd)"
-                    stackId="a"
-                  />
-                  <Area
-                    dataKey="usd"
-                    type="natural"
-                    fill="url(#fillUSD)"
-                    stroke="var(--color-usd)"
-                    stackId="a"
-                  />
-                </>
-              ) : (
-                <Area
-                  dataKey={currency === 'IQD' ? 'iqd' : 'usd'}
-                  type="natural"
-                  fill={currency === 'IQD' ? "url(#fillIQD)" : "url(#fillUSD)"}
-                  stroke={currency === 'IQD' ? "var(--color-iqd)" : "var(--color-usd)"}
-                />
-              )}
+              <Area
+                dataKey={currency === 'IQD' ? 'iqd' : 'usd'}
+                type="natural"
+                fill={currency === 'IQD' ? "url(#fillIQD)" : "url(#fillUSD)"}
+                stroke={currency === 'IQD' ? "var(--color-iqd)" : "var(--color-usd)"}
+              />
             </AreaChart>
           </ChartContainer>
         )}

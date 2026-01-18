@@ -32,18 +32,13 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { cn, generateProductSkuCode } from '@/lib/utils'
-import { Plus, Edit } from 'lucide-react'
+import { Plus, Edit, CheckCircle2, XCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 
 type Motorcycle = {
   id: string
-  brand: string
-  model: string
+  name: string
   sku: string
-  year: number | null
-  engineSize: string | null
-  vin: string | null
-  color: string | null
   image: string | null
   attachment: string | null
   usdRetailPrice: number | string
@@ -53,28 +48,33 @@ type Motorcycle = {
   lowStockThreshold: number
   status: "IN_STOCK" | "RESERVED" | "SOLD" | "OUT_OF_STOCK"
   notes: string | null
+  categoryId: string | null
+  category: {
+    id: string
+    name: string
+  } | null
 }
 
 interface MotorcycleDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSuccess?: () => void
+  categories: { id: string; name: string }[]
   motorcycle?: Motorcycle | null
+  onCategoriesChange?: () => Promise<void>
 }
 
-export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: MotorcycleDialogProps) {
+export function MotorcycleDialog({ open, onOpenChange, onSuccess, categories, motorcycle, onCategoriesChange }: MotorcycleDialogProps) {
   const isEditMode = !!motorcycle
   const params = useParams()
   const locale = (params?.locale as string) || 'ku'
   const t = useTranslations('motorcycles')
   
-  const [brand, setBrand] = useState('')
-  const [model, setModel] = useState('')
+  const [name, setName] = useState('')
   const [sku, setSku] = useState('')
-  const [year, setYear] = useState('')
-  const [engineSize, setEngineSize] = useState('')
-  const [vin, setVin] = useState('')
-  const [color, setColor] = useState('')
+  const [categoryId, setCategoryId] = useState<string>('')
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [showNewCategory, setShowNewCategory] = useState(false)
   const [usdRetailPrice, setUsdRetailPrice] = useState('')
   const [usdWholesalePrice, setUsdWholesalePrice] = useState('')
   const [rmbPrice, setRmbPrice] = useState('')
@@ -95,13 +95,9 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
 
   useEffect(() => {
     if (motorcycle && open) {
-      setBrand(motorcycle.brand || '')
-      setModel(motorcycle.model || '')
+      setName(motorcycle.name || '')
       setSku(motorcycle.sku || '')
-      setYear(motorcycle.year ? String(motorcycle.year) : '')
-      setEngineSize(motorcycle.engineSize || '')
-      setVin(motorcycle.vin || '')
-      setColor(motorcycle.color || '')
+      setCategoryId(motorcycle.categoryId || '')
       setUsdRetailPrice(String(motorcycle.usdRetailPrice || ''))
       setUsdWholesalePrice(String(motorcycle.usdWholesalePrice || ''))
       setRmbPrice(motorcycle.rmbPrice ? String(motorcycle.rmbPrice) : '')
@@ -114,6 +110,8 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
       setImageFile(null)
       setAttachmentFiles([])
       setError(null)
+      setNewCategoryName('')
+      setShowNewCategory(false)
       
       // Parse existing attachments
       if (motorcycle.attachment) {
@@ -142,13 +140,11 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
         setExistingAttachments([])
       }
     } else if (!motorcycle && open) {
-      setBrand('')
-      setModel('')
+      setName('')
       setSku(generateProductSkuCode()) // Auto-generate SKU for new motorcycles
-      setYear('')
-      setEngineSize('')
-      setVin('')
-      setColor('')
+      setCategoryId('')
+      setNewCategoryName('')
+      setShowNewCategory(false)
       setUsdRetailPrice('')
       setUsdWholesalePrice('')
       setRmbPrice('')
@@ -165,8 +161,13 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
   const fontClass = locale === 'ku' ? 'font-kurdish' : 'font-engar'
   const direction = getTextDirection(locale as 'ku' | 'en' | 'ar')
 
-  const initials = brand && model
-    ? `${brand[0]}${model[0]}`.toUpperCase()
+  const initials = name
+    ? name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
     : 'MC'
 
   const handleImageClick = () => {
@@ -241,13 +242,8 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
     setError(null)
 
     try {
-      if (!brand.trim()) {
-        setError('Brand is required')
-        setIsLoading(false)
-        return
-      }
-      if (!model.trim()) {
-        setError('Model is required')
+      if (!name.trim()) {
+        setError('Name is required')
         setIsLoading(false)
         return
       }
@@ -268,19 +264,20 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
       }
 
       const formData = new FormData()
-      formData.append('brand', brand.trim())
-      formData.append('model', model.trim())
+      formData.append('name', name.trim())
       formData.append('sku', sku.trim())
-      if (year) formData.append('year', year)
-      if (engineSize) formData.append('engineSize', engineSize.trim())
-      if (vin) formData.append('vin', vin.trim())
-      if (color) formData.append('color', color.trim())
       formData.append('usdRetailPrice', usdRetailPrice)
       formData.append('usdWholesalePrice', usdWholesalePrice)
       if (rmbPrice) formData.append('rmbPrice', rmbPrice)
       formData.append('stockQuantity', quantity || '0')
       formData.append('lowStockThreshold', lowStockAlertEnabled ? lowStockThreshold || '10' : '0')
       formData.append('status', status)
+      if (categoryId && !showNewCategory) {
+        formData.append('categoryId', categoryId)
+      }
+      if (showNewCategory && newCategoryName.trim()) {
+        formData.append('newCategoryName', newCategoryName.trim())
+      }
       if (notes) formData.append('notes', notes.trim())
       
       if (imageFile) {
@@ -316,13 +313,11 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
       }
 
       if (!isEditMode) {
-        setBrand('')
-        setModel('')
+        setName('')
         setSku('')
-        setYear('')
-        setEngineSize('')
-        setVin('')
-        setColor('')
+        setCategoryId('')
+        setNewCategoryName('')
+        setShowNewCategory(false)
         setUsdRetailPrice('')
         setUsdWholesalePrice('')
         setRmbPrice('')
@@ -337,15 +332,26 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
         setExistingAttachments([])
       }
 
+      // If a new category was created, refetch categories
+      if (showNewCategory && newCategoryName.trim() && onCategoriesChange) {
+        try {
+          await onCategoriesChange()
+        } catch (err) {
+          console.error('Error refetching categories:', err)
+          // Continue even if refetch fails
+        }
+      }
+
       setIsLoading(false)
       onOpenChange(false)
       
-      // Show success toast
+      // Show success toast with checkmark icon
       toast({
         title: isEditMode ? t('dialog.motorcycleUpdated') : t('dialog.motorcycleCreated'),
         description: isEditMode 
-          ? t('dialog.motorcycleUpdatedSuccess', { name: `${brand.trim()} ${model.trim()}` })
-          : t('dialog.motorcycleCreatedSuccess', { name: `${brand.trim()} ${model.trim()}` }),
+          ? t('dialog.motorcycleUpdatedSuccess', { name: name.trim() })
+          : t('dialog.motorcycleCreatedSuccess', { name: name.trim() }),
+        action: <CheckCircle2 className="h-5 w-5 text-green-500" />,
       })
       
       if (onSuccess) {
@@ -357,11 +363,12 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
       setError(errorMessage)
       setIsLoading(false)
       
-      // Show error toast
+      // Show error toast with X icon
       toast({
         title: isEditMode ? t('dialog.updateFailed') : t('dialog.creationFailed'),
         description: errorMessage,
         variant: 'destructive',
+        action: <XCircle className="h-5 w-5 text-white" />,
       })
     }
   }
@@ -421,7 +428,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
                   <Avatar className="h-32 w-32 border-2 border-border">
                     <AvatarImage 
                       src={imagePreview || undefined} 
-                      alt={`${brand} ${model}` || 'Motorcycle'} 
+                      alt={name || 'Motorcycle'} 
                     />
                     <AvatarFallback className="text-3xl bg-muted">
                       {initials}
@@ -449,115 +456,100 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
 
               {/* Form Fields - Right */}
               <div className="space-y-4">
-                {/* Brand & Model in same row */}
+                {/* Name & Code (SKU) in same row */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="brand" className={cn(fontClass, "flex items-center gap-1")}>
-                      {t('dialog.brand')} <span className="text-destructive">*</span>
+                    <Label htmlFor="name" className={cn(fontClass, "flex items-center gap-1")}>
+                      {locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name"} <span className="text-destructive">*</span>
                     </Label>
                     <Input
-                      id="brand"
-                      value={brand}
-                      onChange={(e) => setBrand(e.target.value)}
-                      placeholder={t('dialog.brandPlaceholder')}
+                      id="name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder={locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name"}
                       className={fontClass}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="model" className={cn(fontClass, "flex items-center gap-1")}>
-                      {t('dialog.model')} <span className="text-destructive">*</span>
+                    <Label htmlFor="sku" className={cn(fontClass, "flex items-center gap-1")}>
+                      {locale === "ku" ? "کۆد" : locale === "ar" ? "الكود" : t('dialog.sku')} <span className="text-destructive">*</span>
                     </Label>
+                    <div className="flex gap-2">
                     <Input
-                      id="model"
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      placeholder={t('dialog.modelPlaceholder')}
+                      id="sku"
+                      value={sku}
+                      onChange={(e) => setSku(e.target.value)}
+                      placeholder={t('dialog.skuPlaceholder')}
                       className={fontClass}
                     />
+                      {!isEditMode && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setSku(generateProductSkuCode())}
+                          title="Generate new code"
+                          className="flex-shrink-0"
+                        >
+                          <IconRefresh className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* SKU */}
+                {/* Category */}
                 <div className="space-y-2">
-                  <Label htmlFor="sku" className={cn(fontClass, "flex items-center gap-1")}>
-                    {t('dialog.sku')} <span className="text-destructive">*</span>
-                  </Label>
-                  <div className="flex gap-2">
-                  <Input
-                    id="sku"
-                    value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    placeholder={t('dialog.skuPlaceholder')}
-                    className={fontClass}
-                  />
-                    {!isEditMode && (
+                  <Label htmlFor="category" className={fontClass}>{t('dialog.category')}</Label>
+                  {!showNewCategory ? (
+                    <Select
+                      value={categoryId || "none"}
+                      onValueChange={(value) => {
+                        if (value === "new") {
+                          setShowNewCategory(true)
+                          setCategoryId('')
+                        } else if (value !== "none") {
+                          setCategoryId(value)
+                        } else {
+                          setCategoryId('')
+                        }
+                      }}
+                    >
+                      <SelectTrigger className={fontClass} id="category">
+                        <SelectValue placeholder={t('dialog.selectCategory')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t('dialog.noCategory')}</SelectItem>
+                        {categories.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="new">{t('dialog.createNew')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Input
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder={t('dialog.newCategoryName')}
+                        className={cn("flex-1", fontClass)}
+                      />
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="icon"
-                        onClick={() => setSku(generateProductSkuCode())}
-                        title="Generate new code"
-                        className="flex-shrink-0"
+                        onClick={() => {
+                          setShowNewCategory(false)
+                          setNewCategoryName('')
+                        }}
                       >
-                        <IconRefresh className="h-4 w-4" />
+                        <IconX className="h-4 w-4" />
                       </Button>
-                    )}
-                  </div>
-                  <p className={cn("text-xs text-muted-foreground", fontClass)}>
-                    {t('dialog.skuHint')}
-                  </p>
-                </div>
-
-                {/* Year & Engine Size */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="year" className={fontClass}>{t('dialog.year')}</Label>
-                    <Input
-                      id="year"
-                      type="number"
-                      value={year}
-                      onChange={(e) => setYear(e.target.value)}
-                      placeholder={t('dialog.yearPlaceholder')}
-                      className={fontClass}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="engineSize" className={fontClass}>{t('dialog.engineSize')}</Label>
-                    <Input
-                      id="engineSize"
-                      value={engineSize}
-                      onChange={(e) => setEngineSize(e.target.value)}
-                      placeholder={t('dialog.engineSizePlaceholder')}
-                      className={fontClass}
-                    />
-                  </div>
-                </div>
-
-                {/* VIN & Color */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="vin" className={fontClass}>{t('dialog.vin')}</Label>
-                    <Input
-                      id="vin"
-                      value={vin}
-                      onChange={(e) => setVin(e.target.value)}
-                      placeholder={t('dialog.vinPlaceholder')}
-                      className={fontClass}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="color" className={fontClass}>{t('dialog.color')}</Label>
-                    <Input
-                      id="color"
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      placeholder={t('dialog.colorPlaceholder')}
-                      className={fontClass}
-                    />
-                  </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -824,7 +816,7 @@ export function MotorcycleDialog({ open, onOpenChange, onSuccess, motorcycle }: 
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={handleSave}
-            disabled={isLoading || !brand.trim() || !model.trim() || !sku.trim() || !usdRetailPrice || !usdWholesalePrice}
+            disabled={isLoading || !name.trim() || !sku.trim() || !usdRetailPrice || !usdWholesalePrice}
             className={cn(fontClass, "min-w-[120px]")}
           >
             {isLoading ? (

@@ -91,8 +91,6 @@ export async function GET(
     })
 
     return NextResponse.json({ payments })
-
-    return NextResponse.json({ payments })
   } catch (error) {
     console.error('Error fetching payments:', error)
     return NextResponse.json(
@@ -149,9 +147,30 @@ export async function POST(
     const totalPaymentIqd = parseFloat(amountIqd || '0')
     const totalPaymentUsd = parseFloat(amountUsd || '0')
     
-    // Update customer debts
-    const newDebtIqd = Math.max(0, Number(customer.debtIqd) - totalPaymentIqd)
-    const newDebtUsd = Math.max(0, Number(customer.debtUsd) - totalPaymentUsd)
+    // CRITICAL: Validate that payment does not exceed customer debt
+    const currentDebtIqd = Number(customer.debtIqd || 0)
+    const currentDebtUsd = Number(customer.debtUsd || 0)
+    const currentBalanceIqd = Number(customer.currentBalance || 0)
+    
+    // Validate IQD payment doesn't exceed debt
+    if (totalPaymentIqd > 0 && totalPaymentIqd > currentBalanceIqd) {
+      return NextResponse.json(
+        { error: `Payment amount (${totalPaymentIqd.toLocaleString('en-US')} د.ع) exceeds customer balance (${currentBalanceIqd.toLocaleString('en-US')} د.ع). Cannot pay more than debt.` },
+        { status: 400 }
+      )
+    }
+    
+    // Validate USD payment doesn't exceed debt
+    if (totalPaymentUsd > 0 && totalPaymentUsd > currentDebtUsd) {
+      return NextResponse.json(
+        { error: `Payment amount ($${totalPaymentUsd.toLocaleString('en-US')}) exceeds customer debt ($${currentDebtUsd.toLocaleString('en-US')}). Cannot pay more than debt.` },
+        { status: 400 }
+      )
+    }
+    
+    // Update customer debts (payment reduces debt)
+    const newDebtIqd = Math.max(0, currentDebtIqd - totalPaymentIqd)
+    const newDebtUsd = Math.max(0, currentDebtUsd - totalPaymentUsd)
     
     // Calculate new balance (reduce debt = negative amount in balance)
     const paymentAmount = -totalPaymentIqd // Negative = credit/payment

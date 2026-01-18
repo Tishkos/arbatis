@@ -66,33 +66,75 @@ export async function GET(request: NextRequest) {
         },
       }),
 
-      // Search Motorcycles
-      prisma.motorcycle.findMany({
-        where: {
-          OR: [
-            { brand: { contains: searchTerm, mode: 'insensitive' } },
-            { model: { contains: searchTerm, mode: 'insensitive' } },
-            { sku: { contains: searchTerm, mode: 'insensitive' } },
-            { vin: { contains: searchTerm, mode: 'insensitive' } },
-            { color: { contains: searchTerm, mode: 'insensitive' } },
-          ],
-          status: 'IN_STOCK',
-        },
-        select: {
-          id: true,
-          brand: true,
-          model: true,
-          sku: true,
-          image: true,
-          stockQuantity: true,
-          usdRetailPrice: true,
-          usdWholesalePrice: true,
-        },
-        take: limit,
-        orderBy: {
-          createdAt: 'desc',
-        },
-      }),
+      // Search Motorcycles - try new schema first, fallback to old schema
+      (async () => {
+        try {
+          // Try new schema (with name field)
+          return await prisma.motorcycle.findMany({
+            where: {
+              OR: [
+                { name: { contains: searchTerm, mode: 'insensitive' } },
+                { sku: { contains: searchTerm, mode: 'insensitive' } },
+              ],
+              status: 'IN_STOCK',
+            },
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              image: true,
+              stockQuantity: true,
+              usdRetailPrice: true,
+              usdWholesalePrice: true,
+            },
+            take: limit,
+            orderBy: {
+              createdAt: 'desc',
+            },
+          })
+        } catch (schemaError: any) {
+          // If new schema fails, try old schema (brand/model)
+          if (schemaError?.message?.includes('name') || schemaError?.code === 'P2009') {
+            try {
+              const oldResults = await (prisma.motorcycle.findMany as any)({
+                where: {
+                  OR: [
+                    { brand: { contains: searchTerm, mode: 'insensitive' } },
+                    { model: { contains: searchTerm, mode: 'insensitive' } },
+                    { sku: { contains: searchTerm, mode: 'insensitive' } },
+                    { vin: { contains: searchTerm, mode: 'insensitive' } },
+                    { color: { contains: searchTerm, mode: 'insensitive' } },
+                  ],
+                  status: 'IN_STOCK',
+                },
+                select: {
+                  id: true,
+                  brand: true,
+                  model: true,
+                  sku: true,
+                  image: true,
+                  stockQuantity: true,
+                  usdRetailPrice: true,
+                  usdWholesalePrice: true,
+                },
+                take: limit,
+                orderBy: {
+                  createdAt: 'desc',
+                },
+              })
+              // Transform old schema to new schema format
+              return oldResults.map((m: any) => ({
+                ...m,
+                name: `${m.brand || ''} ${m.model || ''}`.trim() || 'Motorcycle',
+              }))
+            } catch {
+              return []
+            }
+          } else {
+            throw schemaError
+          }
+        }
+      })(),
 
       // Search Invoices (by invoice number, customer name, customer SKU)
       // Invoice numbers are in format: customerName-YYYY-MM-DD-RANDOMCODE
@@ -180,9 +222,9 @@ export async function GET(request: NextRequest) {
         jumlaPrice: p.jumlaPrice,
         type: 'product',
       })),
-      motorcycles: motorcycles.map(m => ({
+      motorcycles: motorcycles.map((m: any) => ({
         id: m.id,
-        name: `${m.brand} ${m.model}`,
+        name: m.name || 'Motorcycle',
         sku: m.sku,
         image: m.image,
         stockQuantity: m.stockQuantity,

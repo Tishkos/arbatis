@@ -11,7 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { IconArrowLeft, IconPaperclip, IconCalendar, IconUser, IconEdit, IconTrash, IconFile, IconDownload, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { format } from 'date-fns'
-import { useState, useEffect, useTransition, useRef } from 'react'
+import { useState, useEffect, useTransition, useRef, useCallback } from 'react'
 import { DeleteProductDialog } from './delete-product-dialog'
 import { ProductDialog } from './product-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -111,16 +111,21 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
   const attachmentInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch categories for edit dialog
-  useEffect(() => {
-    fetch('/api/categories')
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.categories) {
-          setCategories(data.categories)
-        }
-      })
-      .catch(console.error)
+  const fetchCategories = useCallback(async () => {
+    try {
+      const response = await fetch('/api/categories')
+      const data = await response.json()
+      if (data.categories) {
+        setCategories(data.categories)
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error)
+    }
   }, [])
+
+  useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   // Fetch activities
   useEffect(() => {
@@ -206,6 +211,25 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
     .join('')
     .toUpperCase()
     .slice(0, 2)
+
+  const getStatusBadge = (stockQuantity: number) => {
+    // Determine status based on stock quantity
+    const isAvailable = stockQuantity > 0
+    
+    const statusText = isAvailable 
+      ? (locale === 'ku' ? 'بەردەستە' : locale === 'ar' ? 'متاح' : 'Available')
+      : (locale === 'ku' ? 'بەردەست نییە' : locale === 'ar' ? 'غير متاح' : 'Not Available')
+    
+    const statusColor = isAvailable
+      ? 'bg-green-100 text-green-800'
+      : 'bg-red-100 text-red-800'
+    
+    return (
+      <Badge className={cn(statusColor, fontClass)}>
+        {statusText}
+      </Badge>
+    )
+  }
 
   const handleDeleteSuccess = () => {
     router.push(`/${locale}/products`)
@@ -424,25 +448,24 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
                       <p className={cn("mt-1 text-sm font-mono", fontClass)}>{product.sku}</p>
                     </div>
                     <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.category')}</label>
-                      <p className={cn("mt-1 text-sm", fontClass)}>
-                        {product.category?.name || t('detail.noCategory')}
-                      </p>
-                    </div>
-                    <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.stockQuantity')}</label>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className={cn("text-sm font-medium", isLowStock && "text-destructive", fontClass)}>
-                          {product.stockQuantity}
-                        </span>
-                        {isLowStock && (
-                          <Badge variant="destructive" className={fontClass}>{t('detail.lowStock')}</Badge>
-                        )}
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.status')}</label>
+                      <div className="mt-1">
+                        {getStatusBadge(product.stockQuantity)}
                       </div>
                     </div>
                     <div>
-                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.lowStockThreshold')}</label>
-                      <p className={cn("mt-1 text-sm", fontClass)}>{product.lowStockThreshold}</p>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name"}</label>
+                      <p className={cn("mt-1 text-sm", fontClass)}>{product.name}</p>
+                    </div>
+                    <div>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t("columns.category")}</label>
+                      <div className="mt-1">
+                        {product.category ? (
+                          <Badge variant="outline" className={fontClass}>{product.category.name}</Badge>
+                        ) : (
+                          <span className={cn("text-sm text-muted-foreground", fontClass)}>-</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -462,12 +485,11 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
                           const price = typeof product.mufradPrice === 'number' 
                             ? product.mufradPrice 
                             : parseFloat(product.mufradPrice)
-                          const formatted = price.toLocaleString('en-US', { 
-                            minimumFractionDigits: 0, 
+                          return price.toLocaleString('en-US', { 
+                            minimumFractionDigits: 2, 
                             maximumFractionDigits: 2 
                           })
-                          return `${formatted} IQD`
-                        })()}
+                        })()} د.ع
                       </p>
                     </div>
                     <div>
@@ -477,29 +499,55 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
                           const price = typeof product.jumlaPrice === 'number'
                             ? product.jumlaPrice
                             : parseFloat(product.jumlaPrice)
-                          const formatted = price.toLocaleString('en-US', { 
-                            minimumFractionDigits: 0, 
+                          return price.toLocaleString('en-US', { 
+                            minimumFractionDigits: 2, 
                             maximumFractionDigits: 2 
                           })
-                          return `${formatted} IQD`
-                        })()}
+                        })()} د.ع
                       </p>
                     </div>
                     {product.rmbPrice && (
                       <div>
                         <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.rmbPrice')}</label>
                         <p className={cn("mt-1 text-lg font-semibold", fontClass)}>
-                          {(() => {
+                          ¥{(() => {
                             const price = typeof product.rmbPrice === 'number'
                               ? product.rmbPrice
                               : parseFloat(product.rmbPrice)
-                            const formatted = price.toLocaleString('en-US', { 
-                              minimumFractionDigits: 0, 
+                            return price.toLocaleString('en-US', { 
+                              minimumFractionDigits: 2, 
                               maximumFractionDigits: 2 
                             })
-                            return `¥${formatted}`
                           })()}
                         </p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Stock Information */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className={fontClass}>{t('detail.stockQuantity')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.stockQuantity')}</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className={cn("text-sm font-medium", fontClass)}>
+                          {product.stockQuantity}
+                        </span>
+                        {product.lowStockThreshold > 0 && product.stockQuantity <= product.lowStockThreshold && (
+                          <Badge variant="destructive" className={fontClass}>{t('detail.lowStock')}</Badge>
+                        )}
+                      </div>
+                    </div>
+                    {product.lowStockThreshold > 0 && (
+                      <div>
+                        <label className={cn("text-sm font-medium text-muted-foreground", fontClass)}>{t('detail.lowStockThreshold')}</label>
+                        <p className={cn("mt-1 text-sm", fontClass)}>{product.lowStockThreshold}</p>
                       </div>
                     )}
                   </div>
@@ -692,6 +740,7 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
         onSuccess={handleEditSuccess}
         categories={categories}
         product={product}
+        onCategoriesChange={fetchCategories}
       />
 
       {/* Delete Dialog */}

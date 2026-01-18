@@ -76,44 +76,57 @@ export function SectionCards() {
     return null
   }
 
-  const revenueDisplay = stats.totalRevenueIqd > 0 && stats.totalRevenueUsd > 0
-    ? `${stats.totalRevenueIqd.toLocaleString('en-US')} ع.د + $${stats.totalRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : stats.totalRevenueIqd > 0
-    ? `${stats.totalRevenueIqd.toLocaleString('en-US')} ع.د`
-    : `$${stats.totalRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-
   const growthIcon = stats.growthRate >= 0 ? IconTrendingUp : IconTrendingDown
   const GrowthIcon = growthIcon
 
   return (
     <div className={cn("*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4", fontClass)} dir={direction}>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription className={fontClass}>{t('totalRevenue')}</CardDescription>
-          <CardTitle className={cn("text-2xl font-semibold tabular-nums @[250px]/card:text-3xl", fontClass)}>
-            {revenueDisplay}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className={fontClass}>
-              {stats.totalRevenueIqd > 0 && stats.totalRevenueUsd > 0 && (
-                <>
-                  <span>{t('iqd')} + {t('usd')}</span>
-                </>
-              )}
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className={cn("line-clamp-1 flex gap-2 font-medium", fontClass)}>
-            {t('totalRevenueDescription')}
-          </div>
-          <div className={cn("text-muted-foreground", fontClass)}>
-            {stats.totalRevenueIqd > 0 && `${t('iqd')}: ${stats.totalRevenueIqd.toLocaleString('en-US')} ع.د`}
-            {stats.totalRevenueIqd > 0 && stats.totalRevenueUsd > 0 && ' • '}
-            {stats.totalRevenueUsd > 0 && `${t('usd')}: $${stats.totalRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-          </div>
-        </CardFooter>
-      </Card>
+      {stats.totalRevenueIqd > 0 && (
+        <Card className="@container/card">
+          <CardHeader>
+            <CardDescription className={fontClass}>{t('totalRevenue')}</CardDescription>
+            <CardTitle className={cn("text-2xl font-semibold tabular-nums @[250px]/card:text-3xl", fontClass)}>
+              {stats.totalRevenueIqd.toLocaleString('en-US')} ع.د
+            </CardTitle>
+            <CardAction>
+              <Badge variant="outline" className={fontClass}>
+                {t('iqd')}
+              </Badge>
+            </CardAction>
+          </CardHeader>
+          <CardFooter className="flex-col items-start gap-1.5 text-sm">
+            <div className={cn("line-clamp-1 flex gap-2 font-medium", fontClass)}>
+              {t('totalRevenueDescription')}
+            </div>
+            <div className={cn("text-muted-foreground", fontClass)}>
+              {t('iqd')}: {stats.totalRevenueIqd.toLocaleString('en-US')} ع.د
+            </div>
+          </CardFooter>
+        </Card>
+      )}
+      {stats.totalRevenueUsd > 0 && (
+        <Card className="@container/card">
+          <CardHeader>
+            <CardDescription className={fontClass}>{t('totalRevenue')}</CardDescription>
+            <CardTitle className={cn("text-2xl font-semibold tabular-nums @[250px]/card:text-3xl", fontClass)}>
+              ${stats.totalRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </CardTitle>
+            <CardAction>
+              <Badge variant="outline" className={fontClass}>
+                {t('usd')}
+              </Badge>
+            </CardAction>
+          </CardHeader>
+          <CardFooter className="flex-col items-start gap-1.5 text-sm">
+            <div className={cn("line-clamp-1 flex gap-2 font-medium", fontClass)}>
+              {t('totalRevenueDescription')}
+            </div>
+            <div className={cn("text-muted-foreground", fontClass)}>
+              {t('usd')}: ${stats.totalRevenueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          </CardFooter>
+        </Card>
+      )}
       <Card className="@container/card">
         <CardHeader>
           <CardDescription className={fontClass}>{t('newCustomers')}</CardDescription>

@@ -19,13 +19,19 @@ export function Toaster() {
         const { id, title, description, action, ...props } = toast
         return (
           <Toast key={id} {...props}>
-            <div className="grid gap-1">
-              {title && <ToastTitle>{title}</ToastTitle>}
-              {description && (
-                <ToastDescription>{description}</ToastDescription>
+            <div className="flex items-start gap-3 flex-1">
+              {action && (
+                <div className="flex-shrink-0 mt-0.5">
+                  {action}
+                </div>
               )}
+              <div className="grid gap-1 flex-1">
+                {title && <ToastTitle>{title}</ToastTitle>}
+                {description && (
+                  <ToastDescription>{description}</ToastDescription>
+                )}
+              </div>
             </div>
-            {action}
             <ToastClose />
           </Toast>
         )

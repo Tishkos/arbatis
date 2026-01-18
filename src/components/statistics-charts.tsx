@@ -230,8 +230,11 @@ export function StatisticsCharts({ locale }: StatisticsChartsProps) {
                 type="monotone" 
                 dataKey="revenue" 
                 stroke="var(--color-revenue)" 
-                strokeWidth={2}
-                dot={{ r: 4 }}
+                strokeWidth={3}
+                connectNulls={true}
+                isAnimationActive={true}
+                dot={{ r: 5, fill: "var(--color-revenue)", strokeWidth: 2, stroke: "#fff" }}
+                activeDot={{ r: 7, fill: "var(--color-revenue)", strokeWidth: 2, stroke: "#fff" }}
               />
             </LineChart>
           </ChartContainer>

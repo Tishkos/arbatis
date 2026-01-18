@@ -222,7 +222,7 @@ export function InvoiceSuccessDialog({
             if (motoResponse.ok) {
               const motoData = await motoResponse.json()
               if (motoData.motorcycle) {
-                itemName = `${motoData.motorcycle.brand || ''} ${motoData.motorcycle.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemName = motoData.motorcycle.name || `Motorcycle ${motorcycleId.slice(0, 8)}`
                 itemSku = motoData.motorcycle.sku || motorcycleId
                 imageUrl = motoData.motorcycle.image || null
               } else {

@@ -32,7 +32,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { cn, generateProductSkuCode } from '@/lib/utils'
-import { Plus, Edit } from 'lucide-react'
+import { Plus, Edit, CheckCircle2, XCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 type Product = {
   id: string
@@ -59,9 +59,10 @@ interface ProductDialogProps {
   onSuccess?: () => void
   categories: { id: string; name: string }[]
   product?: Product | null
+  onCategoriesChange?: () => Promise<void>
 }
 
-export function ProductDialog({ open, onOpenChange, onSuccess, categories, product }: ProductDialogProps) {
+export function ProductDialog({ open, onOpenChange, onSuccess, categories, product, onCategoriesChange }: ProductDialogProps) {
   // Only treat as edit mode if product has a valid ID
   // Empty ID means it's a new product with pre-filled data (e.g., from sales page)
   const isEditMode = !!(product && product.id && product.id.trim() !== '')
@@ -348,15 +349,26 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
         setExistingAttachments([])
       }
 
+      // If a new category was created, refetch categories
+      if (showNewCategory && newCategoryName.trim() && onCategoriesChange) {
+        try {
+          await onCategoriesChange()
+        } catch (err) {
+          console.error('Error refetching categories:', err)
+          // Continue even if refetch fails
+        }
+      }
+
       setIsLoading(false)
       onOpenChange(false)
       
-      // Show success toast
+      // Show success toast with checkmark icon
       toast({
         title: isEditMode ? t('dialog.productUpdated') : t('dialog.productCreated'),
         description: isEditMode 
           ? t('dialog.productUpdatedSuccess', { name: name.trim() })
           : t('dialog.productCreatedSuccess', { name: name.trim() }),
+        action: <CheckCircle2 className="h-5 w-5 text-green-500" />,
       })
       
       if (onSuccess) {
@@ -368,11 +380,12 @@ export function ProductDialog({ open, onOpenChange, onSuccess, categories, produ
       setError(errorMessage)
       setIsLoading(false)
       
-      // Show error toast
+      // Show error toast with X icon
       toast({
         title: isEditMode ? t('dialog.updateFailed') : t('dialog.creationFailed'),
         description: errorMessage,
         variant: 'destructive',
+        action: <XCircle className="h-5 w-5 text-white" />,
       })
     }
   }

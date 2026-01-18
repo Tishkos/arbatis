@@ -10,7 +10,16 @@ import { logActivity, createActivityDescription, getChanges } from '@/lib/activi
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    let session
+    try {
+      session = await getServerSession(authOptions)
+    } catch (authError) {
+      console.error('Error getting session:', authError)
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 401 }
+      )
+    }
 
     if (!session?.user?.email) {
       return NextResponse.json(
@@ -23,48 +32,129 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const pageSize = parseInt(searchParams.get('pageSize') || '20')
     const search = searchParams.get('search') || ''
+    const categoryId = searchParams.get('categoryId') || ''
     const lowStock = searchParams.get('lowStock') === 'true'
     const sortBy = searchParams.get('sortBy') || 'createdAt'
     const sortOrder = searchParams.get('sortOrder') || 'desc'
 
     const skip = (page - 1) * pageSize
 
-    // Build where clause - only show IN_STOCK motorcycles
-    const where: any = {
-      status: 'IN_STOCK'
-    }
-    
-    if (search) {
-      where.AND = [
-        { status: 'IN_STOCK' },
-        {
-          OR: [
-        { brand: { contains: search, mode: 'insensitive' } },
-        { model: { contains: search, mode: 'insensitive' } },
-        { sku: { contains: search, mode: 'insensitive' } },
-        { color: { contains: search, mode: 'insensitive' } },
-      ]
-    }
-      ]
-      delete where.status
-    }
-
-    // Build orderBy
-    const orderBy: any = {}
+    // Try new schema first, fallback to old schema if migration hasn't run
+    let motorcycles: any[] = []
+    let where: any
+    let orderBy: any = {}
+    let useOldSchema = false
     orderBy[sortBy] = sortOrder
 
-    // Get motorcycles (fetch all if filtering low stock, then filter in code)
-    let motorcycles = await prisma.motorcycle.findMany({
-      where,
-      skip: lowStock ? 0 : skip, // Fetch all if filtering low stock
-      take: lowStock ? undefined : pageSize,
-      orderBy,
-    })
+    // Map new schema field names to old schema if needed
+    const fieldMapping: Record<string, string> = {
+      'name': 'brand', // Fallback to brand for old schema
+    }
+
+    try {
+      // Build where clause for NEW schema (with name and categoryId)
+      where = {
+        status: 'IN_STOCK'
+      }
+      
+      if (categoryId) {
+        where.categoryId = categoryId
+      }
+      
+      if (search) {
+        where.AND = [
+          { status: 'IN_STOCK' },
+          ...(categoryId ? [{ categoryId }] : []),
+          {
+            OR: [
+              { name: { contains: search, mode: 'insensitive' } },
+              { sku: { contains: search, mode: 'insensitive' } },
+            ]
+          }
+        ]
+        delete where.status
+        if (categoryId) delete where.categoryId
+      } else if (categoryId) {
+        where.categoryId = categoryId
+      }
+
+      // Try to fetch with new schema (including category)
+      motorcycles = await (prisma.motorcycle.findMany as any)({
+        where,
+        skip: lowStock ? 0 : skip,
+        take: lowStock ? undefined : pageSize,
+        orderBy,
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      })
+    } catch (schemaError: any) {
+      // If new schema fields don't exist, use old schema
+      if (schemaError?.code === 'P2009' || schemaError?.message?.includes('Unknown field') || 
+          schemaError?.message?.includes('name') || schemaError?.message?.includes('categoryId') ||
+          schemaError?.message?.includes('Unknown arg')) {
+        
+        useOldSchema = true
+        
+        // Build where clause for OLD schema (with brand/model, no categoryId)
+        where = {
+          status: 'IN_STOCK'
+        }
+        
+        if (search) {
+          where.AND = [
+            { status: 'IN_STOCK' },
+            {
+              OR: [
+                { brand: { contains: search, mode: 'insensitive' } },
+                { model: { contains: search, mode: 'insensitive' } },
+                { sku: { contains: search, mode: 'insensitive' } },
+                { color: { contains: search, mode: 'insensitive' } },
+              ]
+            }
+          ]
+          delete where.status
+        }
+
+        // Build orderBy for old schema - map 'name' to 'brand' if needed
+        const oldOrderBy: any = {}
+        const oldSortBy = fieldMapping[sortBy] || sortBy
+        // Make sure the field exists in old schema
+        if (oldSortBy === 'name') {
+          oldOrderBy['brand'] = sortOrder
+        } else {
+          oldOrderBy[oldSortBy] = sortOrder
+        }
+
+        // Fetch with old schema (no category)
+        motorcycles = await prisma.motorcycle.findMany({
+          where,
+          skip: lowStock ? 0 : skip,
+          take: lowStock ? undefined : pageSize,
+          orderBy: oldOrderBy,
+        })
+        
+        // Transform old schema to new schema format for frontend
+        motorcycles = motorcycles.map((m: any) => ({
+          ...m,
+          name: m.name || `${m.brand || ''} ${m.model || ''}`.trim() || 'Motorcycle',
+          category: null,
+          categoryId: null,
+        }))
+      } else {
+        throw schemaError
+      }
+    }
 
     // Filter for low stock items (stockQuantity <= lowStockThreshold)
     if (lowStock) {
       motorcycles = motorcycles.filter(
-        (m) => m.stockQuantity <= m.lowStockThreshold
+        (m: any) => m.stockQuantity <= m.lowStockThreshold
       )
       // Apply pagination after filtering
       const total = motorcycles.length
@@ -80,22 +170,96 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Get total count (for non-low-stock filter)
-    const total = await prisma.motorcycle.count({ where })
+    // Get total count (for non-low-stock filter) - use same schema as fetch
+    let total
+    try {
+      if (useOldSchema) {
+        // For old schema, ensure where clause doesn't have new schema fields
+        const countWhere: any = { status: 'IN_STOCK' }
+        if (search) {
+          countWhere.AND = [
+            { status: 'IN_STOCK' },
+            {
+              OR: [
+                { brand: { contains: search, mode: 'insensitive' } },
+                { model: { contains: search, mode: 'insensitive' } },
+                { sku: { contains: search, mode: 'insensitive' } },
+                { color: { contains: search, mode: 'insensitive' } },
+              ]
+            }
+          ]
+          delete countWhere.status
+        }
+        total = await prisma.motorcycle.count({ where: countWhere })
+      } else {
+        total = await prisma.motorcycle.count({ where })
+      }
+    } catch (countError: any) {
+      // If count fails with new schema, try old schema
+      if (!useOldSchema && (countError?.code === 'P2009' || countError?.message?.includes('Unknown field') || 
+          countError?.message?.includes('name') || countError?.message?.includes('categoryId'))) {
+        const countWhere: any = { status: 'IN_STOCK' }
+        if (search) {
+          countWhere.AND = [
+            { status: 'IN_STOCK' },
+            {
+              OR: [
+                { brand: { contains: search, mode: 'insensitive' } },
+                { model: { contains: search, mode: 'insensitive' } },
+                { sku: { contains: search, mode: 'insensitive' } },
+                { color: { contains: search, mode: 'insensitive' } },
+              ]
+            }
+          ]
+          delete countWhere.status
+        }
+        total = await prisma.motorcycle.count({ where: countWhere })
+      } else {
+        throw countError
+      }
+    }
+
+    // Ensure motorcycles is always an array
+    if (!Array.isArray(motorcycles)) {
+      motorcycles = []
+    }
 
     return NextResponse.json({
-      motorcycles,
+      motorcycles: motorcycles || [],
       pagination: {
         page,
         pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
+        total: total || 0,
+        totalPages: Math.ceil((total || 0) / pageSize),
       },
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching motorcycles:', error)
+    console.error('Error stack:', error?.stack)
+    console.error('Error code:', error?.code)
+    console.error('Error message:', error?.message)
+    
+    // Provide more helpful error message if schema mismatch
+    if (error?.code === 'P2009' || error?.message?.includes('Unknown field') || error?.message?.includes('name') || error?.message?.includes('categoryId') || error?.message?.includes('Unknown arg')) {
+      return NextResponse.json(
+        { 
+          error: 'Database schema needs to be migrated. Please run: npx prisma migrate dev',
+          details: error.message 
+        },
+        { status: 500 }
+      )
+    }
+    
+    // Always return JSON - never throw or return HTML
+    const errorMessage = error?.message || 'Unknown error'
+    const errorDetails = {
+      error: 'Failed to fetch motorcycles',
+      details: errorMessage,
+      code: error?.code,
+    }
+    
     return NextResponse.json(
-      { error: 'Failed to fetch motorcycles' },
+      errorDetails,
       { status: 500 }
     )
   }
@@ -103,7 +267,16 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    let session
+    try {
+      session = await getServerSession(authOptions)
+    } catch (authError) {
+      console.error('Error getting session:', authError)
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 401 }
+      )
+    }
 
     if (!session?.user?.email) {
       return NextResponse.json(
@@ -113,13 +286,10 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = await request.formData()
-    const brand = formData.get('brand') as string
-    const model = formData.get('model') as string
+    const name = formData.get('name') as string
     const sku = formData.get('sku') as string
-    const year = formData.get('year') as string | null
-    const engineSize = formData.get('engineSize') as string | null
-    const vin = formData.get('vin') as string | null
-    const color = formData.get('color') as string | null
+    const categoryId = formData.get('categoryId') as string | null
+    const newCategoryName = formData.get('newCategoryName') as string | null
     const usdRetailPrice = formData.get('usdRetailPrice') as string
     const usdWholesalePrice = formData.get('usdWholesalePrice') as string
     const rmbPrice = formData.get('rmbPrice') as string | null
@@ -132,15 +302,9 @@ export async function POST(request: NextRequest) {
     const existingAttachmentsJson = formData.get('existingAttachments') as string | null
 
     // Validate required fields
-    if (!brand || !brand.trim()) {
+    if (!name || !name.trim()) {
       return NextResponse.json(
-        { error: 'Brand is required' },
-        { status: 400 }
-      )
-    }
-    if (!model || !model.trim()) {
-      return NextResponse.json(
-        { error: 'Model is required' },
+        { error: 'Name is required' },
         { status: 400 }
       )
     }
@@ -162,9 +326,23 @@ export async function POST(request: NextRequest) {
         const existingProduct = await prisma.product.findUnique({
           where: { sku: generated },
         })
-        const existingMotorcycle = await prisma.motorcycle.findUnique({
-          where: { sku: generated },
-        })
+        // Check motorcycle SKU - handle both schema versions
+        let existingMotorcycle = null
+        try {
+          existingMotorcycle = await prisma.motorcycle.findUnique({
+            where: { sku: generated },
+          })
+        } catch (e: any) {
+          // If findUnique fails, try findFirst (works even if schema mismatch)
+          try {
+            existingMotorcycle = await (prisma.motorcycle.findFirst as any)({
+              where: { sku: generated },
+            })
+          } catch {
+            // If both fail, assume no match
+            existingMotorcycle = null
+          }
+        }
         
         if (!existingProduct && !existingMotorcycle) {
           finalSku = generated
@@ -192,9 +370,23 @@ export async function POST(request: NextRequest) {
       const existingProduct = await prisma.product.findUnique({
         where: { sku: finalSku },
       })
-      const existingMotorcycle = await prisma.motorcycle.findUnique({
-        where: { sku: finalSku },
-      })
+      // Check motorcycle SKU - handle both schema versions
+      let existingMotorcycle = null
+      try {
+        existingMotorcycle = await prisma.motorcycle.findUnique({
+          where: { sku: finalSku },
+        })
+      } catch (e: any) {
+        // If findUnique fails, try findFirst (works even if schema mismatch)
+        try {
+          existingMotorcycle = await (prisma.motorcycle.findFirst as any)({
+            where: { sku: finalSku },
+          })
+        } catch {
+          // If both fail, assume no match
+          existingMotorcycle = null
+        }
+      }
 
       if (existingProduct || existingMotorcycle) {
         return NextResponse.json(
@@ -334,31 +526,205 @@ export async function POST(request: NextRequest) {
     const allAttachmentUrls = [...existingAttachmentUrls, ...attachmentUrls]
     const attachmentValue = allAttachmentUrls.length > 0 ? JSON.stringify(allAttachmentUrls) : null
 
-    // Create motorcycle
-    const motorcycle = await prisma.motorcycle.create({
-      data: {
-        brand: brand.trim(),
-        model: model.trim(),
-        sku: finalSku,
-        year: year ? parseInt(year) : null,
-        engineSize: engineSize?.trim() || null,
-        vin: vin?.trim() || null,
-        color: color?.trim() || null,
-        image: imageUrl,
-        attachment: attachmentValue,
-        usdRetailPrice: parseFloat(usdRetailPrice),
-        usdWholesalePrice: parseFloat(usdWholesalePrice),
-        rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
-        stockQuantity: parseInt(stockQuantity || '0'),
-        lowStockThreshold: parseInt(lowStockThreshold || '10'),
-        status: (status as any) || 'IN_STOCK',
-        notes: notes?.trim() || null,
-        createdById: user.id,
-      },
-    })
+    // Handle motorcycle category creation or selection
+    let finalCategoryId: string | null = null
+    
+    // Only process categories if newCategoryName or categoryId is provided
+    if (newCategoryName && newCategoryName.trim()) {
+      try {
+        // Check if MotorcycleCategory model exists in Prisma client
+        const motorcycleCategoryModel = (prisma as any).motorcycleCategory
+        if (!motorcycleCategoryModel) {
+          console.warn('MotorcycleCategory model not found in Prisma client. Run: npx prisma generate')
+          finalCategoryId = null
+        } else {
+          // Check if category already exists (case-insensitive)
+          const existingCategory = await motorcycleCategoryModel.findFirst({
+            where: {
+              name: {
+                equals: newCategoryName.trim(),
+                mode: 'insensitive',
+              },
+            },
+          })
+
+          if (existingCategory) {
+            // Use existing category instead of creating duplicate
+            finalCategoryId = existingCategory.id
+          } else {
+            // Create new category only if it doesn't exist
+            const newCategory = await motorcycleCategoryModel.create({
+              data: {
+                name: newCategoryName.trim(),
+              },
+            })
+            finalCategoryId = newCategory.id
+          }
+        }
+      } catch (error: any) {
+        // If MotorcycleCategory table doesn't exist yet, just skip category
+        if (error?.code === 'P2001' || error?.code === 'P2009' || 
+            error?.message?.includes('motorcycleCategory') || 
+            error?.message?.includes('Unknown field') ||
+            error?.message?.includes('Cannot read properties of undefined') ||
+            error?.message?.includes('findFirst') ||
+            error?.message?.includes('create')) {
+          finalCategoryId = null
+          console.warn('MotorcycleCategory model not available, skipping category creation:', error.message)
+        } else {
+          // Re-throw unexpected errors
+          console.error('Unexpected error creating motorcycle category:', error)
+          throw error
+        }
+      }
+    } else if (categoryId && categoryId !== 'none') {
+      try {
+        // Just use the provided categoryId if MotorcycleCategory model exists
+        const motorcycleCategoryModel = (prisma as any).motorcycleCategory
+        if (motorcycleCategoryModel) {
+          finalCategoryId = categoryId
+        }
+      } catch (error: any) {
+        // If MotorcycleCategory model doesn't exist, skip
+        finalCategoryId = null
+      }
+    }
+
+    // Try to create with new schema first, fallback to old schema if needed
+    let motorcycle
+    try {
+      // Try new schema (with name and categoryId)
+      motorcycle = await (prisma.motorcycle.create as any)({
+        data: {
+          name: name.trim(),
+          sku: finalSku,
+          categoryId: finalCategoryId,
+          image: imageUrl,
+          attachment: attachmentValue,
+          usdRetailPrice: parseFloat(usdRetailPrice),
+          usdWholesalePrice: parseFloat(usdWholesalePrice),
+          rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
+          stockQuantity: parseInt(stockQuantity || '0'),
+          lowStockThreshold: parseInt(lowStockThreshold || '10'),
+          status: (status as any) || 'IN_STOCK',
+          notes: notes?.trim() || null,
+          createdById: user.id,
+        },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      })
+    } catch (schemaError: any) {
+      const errorMessage = schemaError?.message || ''
+      
+      // Check if error is specifically about 'brand' column not existing - this means DB is on new schema
+      // and we should NOT fall back to old schema
+      if (errorMessage.includes('brand') && errorMessage.includes('does not exist')) {
+        // Database is on new schema but something else failed - don't fall back, throw the error
+        throw schemaError
+      }
+      
+      // Check if error is specifically about 'name' field not existing (old schema detection)
+      const isOldSchemaError = 
+        (schemaError?.code === 'P2009' && errorMessage.includes('name') && !errorMessage.includes('brand')) ||
+        (errorMessage.includes('Unknown field') && errorMessage.includes('name') && !errorMessage.includes('brand')) ||
+        (errorMessage.includes('column') && errorMessage.includes('name') && errorMessage.includes('does not exist') && !errorMessage.includes('brand'))
+      
+      // If error might be due to categoryId foreign key issue, try without categoryId first
+      if (!isOldSchemaError && (errorMessage.includes('categoryId') || errorMessage.includes('Foreign key') || errorMessage.includes('foreign key constraint'))) {
+        try {
+          // Retry with new schema but without categoryId
+          motorcycle = await (prisma.motorcycle.create as any)({
+            data: {
+              name: name.trim(),
+              sku: finalSku,
+              image: imageUrl,
+              attachment: attachmentValue,
+              usdRetailPrice: parseFloat(usdRetailPrice),
+              usdWholesalePrice: parseFloat(usdWholesalePrice),
+              rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
+              stockQuantity: parseInt(stockQuantity || '0'),
+              lowStockThreshold: parseInt(lowStockThreshold || '10'),
+              status: (status as any) || 'IN_STOCK',
+              notes: notes?.trim() || null,
+              createdById: user.id,
+              // Don't include categoryId if it was causing issues
+            },
+            include: {
+              category: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          })
+        } catch (retryError: any) {
+          // If retry also fails and error mentions 'name' field, might be old schema
+          if (retryError?.message?.includes('name') && !retryError?.message?.includes('brand')) {
+            // Might be old schema, fall through to old schema fallback
+          } else {
+            throw retryError
+          }
+        }
+      }
+      
+      // Only fall back to old schema if we detected it's actually an old schema error
+      if (isOldSchemaError && !motorcycle) {
+        // Fallback to old schema - split name into brand/model
+        const nameParts = name.trim().split(' ')
+        const brand = nameParts[0] || name.trim()
+        const model = nameParts.slice(1).join(' ') || ''
+        
+        try {
+          motorcycle = await (prisma.motorcycle.create as any)({
+            data: {
+              brand: brand,
+              model: model,
+              sku: finalSku,
+              image: imageUrl,
+              attachment: attachmentValue,
+              usdRetailPrice: parseFloat(usdRetailPrice),
+              usdWholesalePrice: parseFloat(usdWholesalePrice),
+              rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
+              stockQuantity: parseInt(stockQuantity || '0'),
+              lowStockThreshold: parseInt(lowStockThreshold || '10'),
+              status: (status as any) || 'IN_STOCK',
+              notes: notes?.trim() || null,
+              createdById: user.id,
+            },
+          })
+          
+          // Transform old schema response to include name field for frontend
+          motorcycle = {
+            ...motorcycle,
+            name: name.trim(),
+            category: null,
+            categoryId: null,
+          } as any
+        } catch (fallbackError: any) {
+          // If fallback fails with 'brand' doesn't exist, we know DB is on new schema
+          // This should not happen if error detection is correct, but handle it anyway
+          if (fallbackError?.message?.includes('brand') || 
+              (fallbackError?.message?.includes('does not exist') && fallbackError?.message?.includes('brand'))) {
+            throw new Error('Database schema mismatch: Database uses new schema (name field) but code attempted to use old schema (brand/model). Please check your database migration status.')
+          } else {
+            throw fallbackError
+          }
+        }
+      } else if (!motorcycle) {
+        // If we didn't handle the error and motorcycle is still not created, throw original error
+        throw schemaError
+      }
+    }
 
     // Log creation activity
-    const motorcycleName = `${motorcycle.brand} ${motorcycle.model}`
+    const motorcycleName = (motorcycle as any).name || `${(motorcycle as any).brand || ''} ${(motorcycle as any).model || ''}`.trim() || 'Motorcycle'
     await logActivity(
       'MOTORCYCLE',
       motorcycle.id,
@@ -366,8 +732,7 @@ export async function POST(request: NextRequest) {
       user.id,
       createActivityDescription('CREATED', motorcycleName),
       {
-        brand: { old: null, new: motorcycle.brand },
-        model: { old: null, new: motorcycle.model },
+        name: { old: null, new: motorcycleName },
         sku: { old: null, new: motorcycle.sku },
         stockQuantity: { old: null, new: motorcycle.stockQuantity },
         usdRetailPrice: { old: null, new: Number(motorcycle.usdRetailPrice) },

@@ -103,7 +103,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
   const fontClass = locale === 'ku' ? 'font-kurdish' : 'font-engar'
   const direction = getTextDirection(locale as 'ku' | 'en' | 'ar')
   const isRTL = direction === 'rtl'
-  const [motorcycleData, setMotorcycleData] = useState<Record<string, { brand: string; model: string; sku: string }>>({})
+  const [motorcycleData, setMotorcycleData] = useState<Record<string, { name: string; sku: string; category?: { name: string } | null }>>({})
   
   // Auto-print if print parameter is present
   useEffect(() => {
@@ -214,16 +214,23 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         })
       }
       
+      // Filter out invalid IDs (null, empty, etc.)
+      const validMotorcycleIds = motorcycleIds.filter(id => id && id !== 'null' && id.trim() !== '')
+      
       // Fetch all motorcycle details
-      if (motorcycleIds.length > 0) {
-        const fetchPromises = motorcycleIds.map(async (id) => {
+      if (validMotorcycleIds.length > 0) {
+        const fetchPromises = validMotorcycleIds.map(async (id) => {
           try {
             const response = await fetch(`/api/motorcycles/${id}`)
             if (response.ok) {
               const data = await response.json()
               if (data.motorcycle) {
                 return { id, ...data.motorcycle }
+              } else {
+                console.warn(`Motorcycle ${id} not found in response`)
               }
+            } else {
+              console.warn(`Failed to fetch motorcycle ${id}: ${response.status} ${response.statusText}`)
             }
           } catch (error) {
             console.warn(`Error fetching motorcycle ${id}:`, error)
@@ -232,13 +239,13 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         })
         
         const results = await Promise.all(fetchPromises)
-        const newMotorcycleData: Record<string, { brand: string; model: string; sku: string }> = {}
+        const newMotorcycleData: Record<string, { name: string; sku: string; category?: { name: string } | null }> = {}
         results.forEach((result) => {
           if (result) {
             newMotorcycleData[result.id] = {
-              brand: result.brand || '',
-              model: result.model || '',
-              sku: result.sku || result.id
+              name: result.name || '',
+              sku: result.sku || result.id,
+              category: result.category || null
             }
           }
         })
@@ -480,7 +487,11 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
               if (motorcycleData.motorcycle) {
                 const moto = motorcycleData.motorcycle
                 sku = moto.sku || motorcycleId
-                brandOrProductName = `${moto.brand || ''} ${moto.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                brandOrProductName = moto.name || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                // Fetch category name if available
+                if (moto.category) {
+                  categoryName = moto.category.name || null
+                }
                 
                 // Construct motorcycle image path from SKU
                 if (sku) {
@@ -928,7 +939,15 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
               return locale === 'ku' ? 'وێنە' : locale === 'ar' ? 'صورة' : 'Image'
             })())}</th>
             <th style="width: 28%;">${escapeHtml(t('brandName') || 'Product Name')}</th>
-            <th style="width: 12%;">${escapeHtml(t('sku') || 'Code')}</th>
+            <th style="width: 12%;">${escapeHtml((() => {
+              try {
+                const translation = t('category')
+                if (translation && !translation.includes('navigation.invoiceDetail') && !translation.includes('category')) {
+                  return translation
+                }
+              } catch (e) {}
+              return locale === 'ku' ? 'پۆل' : locale === 'ar' ? 'فئة' : 'Category'
+            })())}</th>
             <th style="width: 8%;" class="text-right">${escapeHtml(t('quantity') || 'Qty')}</th>
             <th style="width: 20%;" class="text-right">${escapeHtml(t('unitPrice') || 'Unit Price')} (${currencyLabel})</th>
             <th style="width: 20%;" class="text-right">${escapeHtml(t('totalPrice') || 'Total')} (${currencyLabel})</th>
@@ -1187,7 +1206,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
             if (motoResponse.ok) {
               const motoData = await motoResponse.json()
               if (motoData.motorcycle) {
-                itemName = `${motoData.motorcycle.brand || ''} ${motoData.motorcycle.model || ''}`.trim() || `Motorcycle ${motorcycleId.slice(0, 8)}`
+                itemName = motoData.motorcycle.name || `Motorcycle ${motorcycleId.slice(0, 8)}`
                 itemSku = motoData.motorcycle.sku || motorcycleId
                 imageUrl = motoData.motorcycle.image || null
               } else {
@@ -1616,12 +1635,6 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className={cn("text-sm text-muted-foreground", fontClass)}>{t('subtotal')} ({currencyLabel})</span>
-                      <span className={cn("text-sm font-medium", fontClass)}>
-                        {currencySymbol}{invoice.subtotal.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
                     {invoice.discount > 0 && (
                       <div className="flex justify-between items-center">
                         <span className={cn("text-sm text-muted-foreground", fontClass)}>{t('discount')}</span>
@@ -1752,14 +1765,21 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                       // For motorcycle items, use fetched motorcycle data
                       if (isMotorcycleItem && !item.product) {
                         const motorcycleId = item.notes?.replace(/^MOTORCYCLE:/i, '').trim() || ''
-                        const motoData = motorcycleData[motorcycleId]
-                        if (motoData) {
-                          itemDisplayName = `${motoData.brand} ${motoData.model}`
-                          itemSku = motoData.sku || motorcycleId
+                        // Skip if ID is invalid
+                        if (motorcycleId && motorcycleId !== 'null' && motorcycleId.trim() !== '') {
+                          const motoData = motorcycleData[motorcycleId]
+                          if (motoData && motoData.name) {
+                            itemDisplayName = motoData.name
+                            itemSku = motoData.sku || motorcycleId
+                          } else {
+                            // Data might still be loading, show a better fallback
+                            itemDisplayName = `Motorcycle (${motorcycleId.slice(0, 8)}...)`
+                            itemSku = motorcycleId
+                          }
                         } else {
-                          // Fallback if data not loaded yet
-                          itemDisplayName = 'Motorcycle'
-                          itemSku = motorcycleId || null
+                          // Invalid motorcycle ID
+                          itemDisplayName = 'Motorcycle (Invalid ID)'
+                          itemSku = null
                         }
                       }
                       

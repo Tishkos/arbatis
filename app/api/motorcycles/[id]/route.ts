@@ -5,7 +5,6 @@ import { prisma } from '@/lib/db'
 import { writeFile, mkdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import sharp from 'sharp'
 import { logActivity, createActivityDescription, getChanges } from '@/lib/activity-logger'
 
 export async function GET(
@@ -13,7 +12,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    let session
+    try {
+      session = await getServerSession(authOptions)
+    } catch (authError) {
+      console.error('Error getting session:', authError)
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 401 }
+      )
+    }
 
     if (!session?.user?.email) {
       return NextResponse.json(
@@ -24,9 +32,39 @@ export async function GET(
 
     const { id } = await params
 
-    const motorcycle = await prisma.motorcycle.findUnique({
-      where: { id },
-    })
+    // Try to fetch with new schema first, fallback to old schema if needed
+    let motorcycle
+    try {
+      motorcycle = await prisma.motorcycle.findUnique({
+        where: { id },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      })
+    } catch (schemaError: any) {
+      // If category relation doesn't exist, fetch without it
+      if (schemaError?.code === 'P2019' || schemaError?.message?.includes('category')) {
+        motorcycle = await prisma.motorcycle.findUnique({
+          where: { id },
+        })
+        // Transform old schema to new schema format for frontend
+        if (motorcycle) {
+          motorcycle = {
+            ...motorcycle,
+            name: (motorcycle as any).name || `${(motorcycle as any).brand || ''} ${(motorcycle as any).model || ''}`.trim() || 'Motorcycle',
+            category: null,
+            categoryId: null,
+          } as any
+        }
+      } else {
+        throw schemaError
+      }
+    }
 
     if (!motorcycle) {
       return NextResponse.json(
@@ -38,8 +76,10 @@ export async function GET(
     return NextResponse.json({ motorcycle })
   } catch (error) {
     console.error('Error fetching motorcycle:', error)
+    // Always return JSON, never HTML
+    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch motorcycle'
     return NextResponse.json(
-      { error: 'Failed to fetch motorcycle' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -50,7 +90,16 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    let session
+    try {
+      session = await getServerSession(authOptions)
+    } catch (authError) {
+      console.error('Error getting session:', authError)
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 401 }
+      )
+    }
 
     if (!session?.user?.email) {
       return NextResponse.json(
@@ -61,13 +110,10 @@ export async function PUT(
 
     const { id } = await params
     const formData = await request.formData()
-    const brand = formData.get('brand') as string
-    const model = formData.get('model') as string
+    const name = formData.get('name') as string
     const sku = formData.get('sku') as string
-    const year = formData.get('year') as string | null
-    const engineSize = formData.get('engineSize') as string | null
-    const vin = formData.get('vin') as string | null
-    const color = formData.get('color') as string | null
+    const categoryId = formData.get('categoryId') as string | null
+    const newCategoryName = formData.get('newCategoryName') as string | null
     const usdRetailPrice = formData.get('usdRetailPrice') as string
     const usdWholesalePrice = formData.get('usdWholesalePrice') as string
     const rmbPrice = formData.get('rmbPrice') as string | null
@@ -80,15 +126,9 @@ export async function PUT(
     const existingAttachmentsJson = formData.get('existingAttachments') as string | null
 
     // Validate required fields
-    if (!brand || !brand.trim()) {
+    if (!name || !name.trim()) {
       return NextResponse.json(
-        { error: 'Brand is required' },
-        { status: 400 }
-      )
-    }
-    if (!model || !model.trim()) {
-      return NextResponse.json(
-        { error: 'Model is required' },
+        { error: 'Name is required' },
         { status: 400 }
       )
     }
@@ -186,14 +226,22 @@ export async function PUT(
       const bytes = await imageFile.arrayBuffer()
       const buffer = Buffer.from(bytes)
 
-      // Compress image using Sharp
-      const compressedBuffer = await sharp(buffer)
-        .resize(800, 800, {
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .jpeg({ quality: 85, progressive: true })
-        .toBuffer()
+      // Compress image using Sharp (dynamic import to avoid loading for GET requests)
+      let compressedBuffer: Buffer
+      try {
+        const sharp = (await import('sharp')).default
+        compressedBuffer = await sharp(buffer)
+          .resize(800, 800, {
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .jpeg({ quality: 85, progressive: true })
+          .toBuffer()
+      } catch (sharpError) {
+        // If sharp fails to load (e.g., Windows Application Control policy), use original buffer
+        console.warn('Sharp module failed to load, using original image:', sharpError)
+        compressedBuffer = buffer
+      }
 
       const productsDir = join(process.cwd(), 'public', 'products')
       if (!existsSync(productsDir)) {
@@ -320,31 +368,84 @@ export async function PUT(
       return url.split('/').pop() || url
     }
 
-    // Prepare update data
-    const updateData: any = {
-      brand: brand.trim(),
-      model: model.trim(),
-      sku: finalSku,
-      year: year ? parseInt(year) : null,
-      engineSize: engineSize?.trim() || null,
-      vin: vin?.trim() || null,
-      color: color?.trim() || null,
-      image: imageUrl,
-      attachment: attachmentValue,
-      usdRetailPrice: parseFloat(usdRetailPrice),
-      usdWholesalePrice: parseFloat(usdWholesalePrice),
-      rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
-      stockQuantity: parseInt(stockQuantity || '0'),
-      lowStockThreshold: parseInt(lowStockThreshold || '10'),
-      status: (status as any) || 'IN_STOCK',
-      notes: notes?.trim() || null,
-      updatedById: user.id,
+    // Handle motorcycle category creation or selection
+    let finalCategoryId: string | null = null
+    try {
+      // Check if MotorcycleCategory model exists in Prisma client
+      if (prisma.motorcycleCategory && newCategoryName && newCategoryName.trim()) {
+        const existingCategory = await prisma.motorcycleCategory.findFirst({
+          where: {
+            name: {
+              equals: newCategoryName.trim(),
+              mode: 'insensitive',
+            },
+          },
+        })
+
+        if (existingCategory) {
+          finalCategoryId = existingCategory.id
+        } else {
+          const newCategory = await prisma.motorcycleCategory.create({
+            data: {
+              name: newCategoryName.trim(),
+            },
+          })
+          finalCategoryId = newCategory.id
+        }
+      } else if (categoryId && categoryId !== 'none' && prisma.motorcycleCategory) {
+        finalCategoryId = categoryId
+      }
+    } catch (error: any) {
+      // If MotorcycleCategory table doesn't exist yet, just skip category
+      if (error?.code === 'P2001' || error?.code === 'P2009' || 
+          error?.message?.includes('motorcycleCategory') || 
+          error?.message?.includes('Unknown field') ||
+          error?.message?.includes('Cannot read properties of undefined')) {
+        finalCategoryId = null
+      } else {
+        throw error
+      }
+    }
+
+    // Prepare update data - try new schema first
+    let updateData: any
+    try {
+      updateData = {
+        name: name.trim(),
+        sku: finalSku,
+        image: imageUrl,
+        attachment: attachmentValue,
+        usdRetailPrice: parseFloat(usdRetailPrice),
+        usdWholesalePrice: parseFloat(usdWholesalePrice),
+        rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
+        stockQuantity: parseInt(stockQuantity || '0'),
+        lowStockThreshold: parseInt(lowStockThreshold || '10'),
+        status: (status as any) || 'IN_STOCK',
+        notes: notes?.trim() || null,
+        categoryId: finalCategoryId,
+        updatedById: user.id,
+      }
+    } catch {
+      // Fallback if schema doesn't support new fields
+      updateData = {
+        name: name.trim(),
+        sku: finalSku,
+        image: imageUrl,
+        attachment: attachmentValue,
+        usdRetailPrice: parseFloat(usdRetailPrice),
+        usdWholesalePrice: parseFloat(usdWholesalePrice),
+        rmbPrice: rmbPrice ? parseFloat(rmbPrice) : null,
+        stockQuantity: parseInt(stockQuantity || '0'),
+        lowStockThreshold: parseInt(lowStockThreshold || '10'),
+        status: (status as any) || 'IN_STOCK',
+        notes: notes?.trim() || null,
+        updatedById: user.id,
+      }
     }
 
     // Get changes for activity logging
-    const oldValues = {
-      brand: currentMotorcycle.brand,
-      model: currentMotorcycle.model,
+    const oldValues: any = {
+      name: (currentMotorcycle as any).name || (currentMotorcycle as any).brand || '',
       sku: currentMotorcycle.sku,
       usdRetailPrice: Number(currentMotorcycle.usdRetailPrice),
       usdWholesalePrice: Number(currentMotorcycle.usdWholesalePrice),
@@ -354,8 +455,7 @@ export async function PUT(
       notes: currentMotorcycle.notes,
     }
     const newValues = {
-      brand: updateData.brand,
-      model: updateData.model,
+      name: updateData.name,
       sku: updateData.sku,
       usdRetailPrice: updateData.usdRetailPrice,
       usdWholesalePrice: updateData.usdWholesalePrice,
@@ -387,12 +487,22 @@ export async function PUT(
     }
 
     // Update motorcycle
-    const motorcycle = await prisma.motorcycle.update({
+    let motorcycle = await prisma.motorcycle.update({
       where: { id },
       data: updateData,
     })
 
-    const motorcycleName = `${motorcycle.brand} ${motorcycle.model}`
+    // Transform old schema response to include name field for frontend
+    if (!(motorcycle as any).name && ((motorcycle as any).brand || (motorcycle as any).model)) {
+      motorcycle = {
+        ...motorcycle,
+        name: name.trim(),
+        category: null,
+        categoryId: null,
+      } as any
+    }
+
+    const motorcycleName = (motorcycle as any).name || `${(motorcycle as any).brand || ''} ${(motorcycle as any).model || ''}`.trim() || 'Motorcycle'
 
     // Log attachment activities separately
     if (newAttachmentUrls.length > 0) {
@@ -468,7 +578,16 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    let session
+    try {
+      session = await getServerSession(authOptions)
+    } catch (authError) {
+      console.error('Error getting session:', authError)
+      return NextResponse.json(
+        { error: 'Authentication error' },
+        { status: 401 }
+      )
+    }
 
     if (!session?.user?.email) {
       return NextResponse.json(

@@ -234,11 +234,11 @@ export class SaleService {
             // Log activity for motorcycle - stock reduced due to sale
             const motorcycleFull = await tx.motorcycle.findUnique({
               where: { id: motorcycleId },
-              select: { brand: true, model: true },
+              select: { name: true },
             });
             
             if (motorcycleFull) {
-              const motorcycleName = `${motorcycleFull.brand} ${motorcycleFull.model}`;
+              const motorcycleName = motorcycleFull.name || 'Motorcycle';
               const quantitySold = item.quantity;
               const unitPrice = Number(item.unitPrice) || 0;
               const totalPrice = quantitySold * unitPrice;

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { IconArrowLeft, IconCalendar, IconUser, IconEdit, IconTrash, IconAlertCircle, IconCurrencyDollar, IconSearch, IconChevronLeft, IconChevronRight, IconChevronsLeft, IconChevronsRight, IconPrinter, IconPaperclip, IconExternalLink, IconPlus, IconX } from '@tabler/icons-react'
+import { IconArrowLeft, IconCalendar, IconUser, IconEdit, IconTrash, IconAlertCircle, IconAlertTriangle, IconCurrencyDollar, IconSearch, IconChevronLeft, IconChevronRight, IconChevronsLeft, IconChevronsRight, IconPrinter, IconPaperclip, IconExternalLink, IconPlus, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
 import { format } from 'date-fns'
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -176,6 +176,11 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
+  const [isWarningDialogOpen, setIsWarningDialogOpen] = useState(false)
+  const [isErrorDialogOpen, setIsErrorDialogOpen] = useState(false)
+  const [warningMessage, setWarningMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [pendingPaymentCallback, setPendingPaymentCallback] = useState<(() => void) | null>(null)
   const [payments, setPayments] = useState<PaymentData[]>([])
   const [balanceHistory, setBalanceHistory] = useState<BalanceData[]>([])
   const [loadingPayments, setLoadingPayments] = useState(true)
@@ -211,23 +216,44 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
     setLoadingPayments(true)
     fetch(`/api/customers/${customer.id}/payments`)
       .then(async res => {
+        // Check content type before trying to parse JSON
+        const contentType = res.headers.get('content-type')
+        const isJson = contentType && contentType.includes('application/json')
+        
         if (!res.ok) {
-          // Try to get error message from response
+          // If 404, the endpoint might not exist, just return empty array
+          if (res.status === 404) {
+            console.warn('Payments API endpoint not found (404), returning empty payments')
+            return { payments: [] }
+          }
+          
+          // Try to get error message from response if it's JSON
           let errorMessage = 'Failed to fetch payments'
-          try {
-            const errorData = await res.json()
-            errorMessage = errorData.error || errorMessage
-          } catch {
-            // If response is not JSON, use status text
+          if (isJson) {
+            try {
+              const errorData = await res.json()
+              errorMessage = errorData.error || errorMessage
+            } catch {
+              errorMessage = res.statusText || errorMessage
+            }
+          } else {
             errorMessage = res.statusText || errorMessage
           }
           console.error(`Payments API error (${res.status}):`, errorMessage)
-          throw new Error(errorMessage)
+          // Don't throw, just return empty array
+          return { payments: [] }
         }
-        return res.json()
+        
+        // Only try to parse JSON if content type is correct
+        if (isJson) {
+          return res.json()
+        } else {
+          console.warn('Payments API returned non-JSON response, returning empty array')
+          return { payments: [] }
+        }
       })
       .then(data => {
-        if (data.payments && Array.isArray(data.payments)) {
+        if (data && data.payments && Array.isArray(data.payments)) {
           setPayments(data.payments)
         } else {
           setPayments([])
@@ -404,6 +430,57 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
   }
 
   const handlePayment = async () => {
+    // Validate that at least one payment amount is entered
+    const paymentIqd = parseFloat(paymentAmountIqd || '0')
+    const paymentUsd = parseFloat(paymentAmountUsd || '0')
+    
+    if (paymentIqd === 0 && paymentUsd === 0) {
+      const errorMsg = t('detail.paymentDialog.enterAmount') || 'Please enter a payment amount'
+      setErrorMessage(errorMsg)
+      setIsErrorDialogOpen(true)
+      return
+    }
+    
+    // Calculate current balance
+    const currentBalanceIqd = Number(customer.currentBalance)
+    const currentBalanceUsd = Number(customer.debtUsd)
+    
+    // CRITICAL: Prevent payment from exceeding debt - block payment if it exceeds
+    const errors: string[] = []
+    
+    if (paymentIqd > 0 && paymentIqd > currentBalanceIqd) {
+      errors.push(
+        locale === 'ku'
+          ? `زیاتر لە باڵانسی ئێستای کڕیار نابێت بدرێت. کۆی باڵانس: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+          : locale === 'ar'
+          ? `لا يمكن الدفع أكثر من رصيد العميل. إجمالي الرصيد: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+          : `Cannot pay more than customer balance. Total balance: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+      )
+    }
+    
+    if (paymentUsd > 0 && paymentUsd > currentBalanceUsd) {
+      errors.push(
+        locale === 'ku'
+          ? `زیاتر لە باڵانسی ئێستای کڕیار نابێت بدرێت. کۆی باڵانس: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+          : locale === 'ar'
+          ? `لا يمكن الدفع أكثر من رصيد العميل. إجمالي الرصيد: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+          : `Cannot pay more than customer balance. Total balance: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+      )
+    }
+    
+    // Block payment if errors exist
+    if (errors.length > 0) {
+      setErrorMessage(errors.join('\n\n'))
+      setIsErrorDialogOpen(true)
+      return
+    }
+    
+    // No errors, proceed with payment
+    processPayment()
+  }
+
+  const processPayment = async () => {
+    setIsWarningDialogOpen(false)
     setIsProcessingPayment(true)
     try {
       const response = await fetch(`/api/customers/${customer.id}/payments`, {
@@ -422,14 +499,15 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
       const data = await response.json()
 
       if (!response.ok) {
-        const errorMessage = data.error || 'Failed to process payment'
+        const errorMsg = data.error || 'Failed to process payment'
         // Show error message (validation or other errors)
-        if (errorMessage.includes('amount') || errorMessage.includes('بڕ')) {
-          alert(t('detail.paymentDialog.enterAmount') || errorMessage)
-        } else {
-          alert(errorMessage)
-        }
-        throw new Error(errorMessage)
+        const displayError = errorMsg.includes('amount') || errorMsg.includes('بڕ')
+          ? (t('detail.paymentDialog.enterAmount') || errorMsg)
+          : errorMsg
+        setErrorMessage(displayError)
+        setIsErrorDialogOpen(true)
+        setIsProcessingPayment(false)
+        throw new Error(errorMsg)
       }
 
       // If invoice was created, open it for printing
@@ -479,7 +557,9 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
         })
     } catch (error) {
       console.error('Error processing payment:', error)
-      alert(error instanceof Error ? error.message : 'Failed to process payment')
+      const errorMsg = error instanceof Error ? error.message : 'Failed to process payment'
+      setErrorMessage(errorMsg)
+      setIsErrorDialogOpen(true)
     } finally {
       setIsProcessingPayment(false)
     }
@@ -1998,6 +2078,28 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
             </div>
           </AlertDialogHeader>
           <div className="space-y-4 py-4">
+            {/* Current Balance Display */}
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center justify-between">
+                  <Label className={cn("text-sm font-semibold", fontClass)}>
+                    {locale === 'ku' ? 'باڵانسی ئێستا' : locale === 'ar' ? 'رصيد العميل' : 'Current Balance'} ({locale === 'ku' ? 'د.ع' : 'IQD'})
+                  </Label>
+                  <span className={cn("text-lg font-bold", fontClass)}>
+                    {customer.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-l pl-4">
+                  <Label className={cn("text-sm font-semibold", fontClass)}>
+                    {locale === 'ku' ? 'باڵانسی ئێستا' : locale === 'ar' ? 'رصيد العميل' : 'Current Balance'} (USD)
+                  </Label>
+                  <span className={cn("text-lg font-bold", fontClass)}>
+                    ${customer.debtUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="paymentIqd" className={fontClass}>{t('detail.paymentDialog.amountIqd')}</Label>
@@ -2006,8 +2108,35 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
                   type="number"
                   step="0.01"
                   min="0"
+                  max={Number(customer.currentBalance)}
                   value={paymentAmountIqd}
-                  onChange={(e) => setPaymentAmountIqd(e.target.value)}
+                  onChange={(e) => {
+                    const inputValue = e.target.value
+                    const numericValue = parseFloat(inputValue || '0')
+                    const currentBalanceIqd = Number(customer.currentBalance)
+                    
+                    // Prevent payment from exceeding debt
+                    if (numericValue > currentBalanceIqd) {
+                      setPaymentAmountIqd(currentBalanceIqd.toString())
+                      setErrorMessage(
+                        locale === 'ku'
+                          ? `زیاتر لە باڵانسی ئێستای کڕیار نابێت بدرێت. کۆی باڵانس: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+                          : locale === 'ar'
+                          ? `لا يمكن الدفع أكثر من رصيد العميل. إجمالي الرصيد: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+                          : `Cannot pay more than customer balance. Total balance: ${currentBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع`
+                      )
+                      setIsErrorDialogOpen(true)
+                    } else {
+                      setPaymentAmountIqd(inputValue)
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const numericValue = parseFloat(e.target.value || '0')
+                    const currentBalanceIqd = Number(customer.currentBalance)
+                    if (numericValue > currentBalanceIqd) {
+                      setPaymentAmountIqd(currentBalanceIqd.toString())
+                    }
+                  }}
                   placeholder="0.00"
                   className={fontClass}
                 />
@@ -2019,13 +2148,158 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
                   type="number"
                   step="0.01"
                   min="0"
+                  max={Number(customer.debtUsd)}
                   value={paymentAmountUsd}
-                  onChange={(e) => setPaymentAmountUsd(e.target.value)}
+                  onChange={(e) => {
+                    const inputValue = e.target.value
+                    const numericValue = parseFloat(inputValue || '0')
+                    const currentBalanceUsd = Number(customer.debtUsd)
+                    
+                    // Prevent payment from exceeding debt
+                    if (numericValue > currentBalanceUsd) {
+                      setPaymentAmountUsd(currentBalanceUsd.toString())
+                      setErrorMessage(
+                        locale === 'ku'
+                          ? `زیاتر لە باڵانسی ئێستای کڕیار نابێت بدرێت. کۆی باڵانس: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                          : locale === 'ar'
+                          ? `لا يمكن الدفع أكثر من رصيد العميل. إجمالي الرصيد: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                          : `Cannot pay more than customer balance. Total balance: $${currentBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                      )
+                      setIsErrorDialogOpen(true)
+                    } else {
+                      setPaymentAmountUsd(inputValue)
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const numericValue = parseFloat(e.target.value || '0')
+                    const currentBalanceUsd = Number(customer.debtUsd)
+                    if (numericValue > currentBalanceUsd) {
+                      setPaymentAmountUsd(currentBalanceUsd.toString())
+                    }
+                  }}
                   placeholder="0.00"
                   className={fontClass}
                 />
               </div>
             </div>
+
+            {/* Projected Balance Calculation */}
+            {(() => {
+              const paymentIqd = parseFloat(paymentAmountIqd || '0')
+              const paymentUsd = parseFloat(paymentAmountUsd || '0')
+              const currentBalanceIqd = Number(customer.currentBalance)
+              const currentBalanceUsd = Number(customer.debtUsd)
+              
+              // Payment reduces balance (payment is negative amount)
+              const projectedBalanceIqd = currentBalanceIqd - paymentIqd
+              const projectedBalanceUsd = Math.max(0, currentBalanceUsd - paymentUsd) // USD debt can't go negative
+              
+              const willBeNegativeIqd = projectedBalanceIqd < 0
+              const willBeNegativeUsd = paymentUsd > currentBalanceUsd
+              const willBePositiveIqd = projectedBalanceIqd > 0
+              const hasAnyWarning = willBeNegativeIqd || willBeNegativeUsd
+              
+              return (
+                <div className="space-y-3">
+                  {/* Projected Balance - Horizontal Layout */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* IQD Projected Balance */}
+                    <div className={cn(
+                      "rounded-lg border p-4 space-y-2",
+                      willBeNegativeIqd ? "bg-yellow-50 border-yellow-300 dark:bg-yellow-950/20 dark:border-yellow-800" :
+                      willBePositiveIqd ? "bg-green-50 border-green-300 dark:bg-green-950/20 dark:border-green-800" :
+                      "bg-blue-50 border-blue-300 dark:bg-blue-950/20 dark:border-blue-800"
+                    )}>
+                      <div className="flex items-center justify-between">
+                        <Label className={cn("text-sm font-semibold flex items-center gap-2", fontClass)}>
+                          {willBeNegativeIqd && <IconAlertTriangle className="h-4 w-4 text-yellow-600" />}
+                          {locale === 'ku' ? 'باڵانسی دواتر' : locale === 'ar' ? 'الرصيد المتوقع' : 'Projected Balance'} ({locale === 'ku' ? 'د.ع' : 'IQD'})
+                        </Label>
+                        <span className={cn(
+                          "text-lg font-bold",
+                          willBeNegativeIqd ? "text-yellow-700 dark:text-yellow-400" :
+                          willBePositiveIqd ? "text-green-700 dark:text-green-400" :
+                          "text-blue-700 dark:text-blue-400",
+                          fontClass
+                        )}>
+                          {projectedBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع
+                        </span>
+                      </div>
+                      {willBeNegativeIqd && (
+                        <div className={cn("text-sm text-yellow-700 dark:text-yellow-300 flex items-center gap-2 mt-2", fontClass)}>
+                          <IconAlertTriangle className="h-4 w-4 flex-shrink-0" />
+                          <span>
+                            {locale === 'ku' 
+                              ? `ئاگاداری: پارەدانی زیاترە لە باڵانسی ئێستا. باڵانسی نوێ دەبێتە ${Math.abs(projectedBalanceIqd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع (کڕێدیت)`
+                              : locale === 'ar'
+                              ? `تحذير: الدفع أكبر من رصيد العميل. سيكون الرصيد الجديد ${Math.abs(projectedBalanceIqd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع (رصيد مدين)`
+                              : `Warning: Payment exceeds customer balance. New balance will be ${Math.abs(projectedBalanceIqd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع (credit)`
+                            }
+                          </span>
+                        </div>
+                      )}
+                      {paymentIqd > 0 && !willBeNegativeIqd && (
+                        <div className={cn("text-sm text-green-700 dark:text-green-300 mt-2", fontClass)}>
+                          {locale === 'ku'
+                            ? `باڵانسی ئێستا دەبێتە ${projectedBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع دوای پارەدان`
+                            : locale === 'ar'
+                            ? `سيكون رصيد العميل ${projectedBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع بعد الدفع`
+                            : `Customer balance will be ${projectedBalanceIqd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} د.ع after payment`
+                          }
+                        </div>
+                      )}
+                    </div>
+
+                    {/* USD Projected Balance */}
+                    <div className={cn(
+                      "rounded-lg border p-4 space-y-2",
+                      willBeNegativeUsd ? "bg-yellow-50 border-yellow-300 dark:bg-yellow-950/20 dark:border-yellow-800" :
+                      paymentUsd > 0 && currentBalanceUsd > 0 ? "bg-green-50 border-green-300 dark:bg-green-950/20 dark:border-green-800" :
+                      "bg-blue-50 border-blue-300 dark:bg-blue-950/20 dark:border-blue-800"
+                    )}>
+                      <div className="flex items-center justify-between">
+                        <Label className={cn("text-sm font-semibold flex items-center gap-2", fontClass)}>
+                          {willBeNegativeUsd && <IconAlertTriangle className="h-4 w-4 text-yellow-600" />}
+                          {locale === 'ku' ? 'باڵانسی دواتر' : locale === 'ar' ? 'الرصيد المتوقع' : 'Projected Balance'} (USD)
+                        </Label>
+                        <span className={cn(
+                          "text-lg font-bold",
+                          willBeNegativeUsd ? "text-yellow-700 dark:text-yellow-400" :
+                          paymentUsd > 0 && currentBalanceUsd > 0 ? "text-green-700 dark:text-green-400" :
+                          "text-blue-700 dark:text-blue-400",
+                          fontClass
+                        )}>
+                          ${projectedBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                      {willBeNegativeUsd && (
+                        <div className={cn("text-sm text-yellow-700 dark:text-yellow-300 flex items-center gap-2 mt-2", fontClass)}>
+                          <IconAlertTriangle className="h-4 w-4 flex-shrink-0" />
+                          <span>
+                            {locale === 'ku' 
+                              ? `ئاگاداری: پارەدانی زیاترە لە باڵانسی ئێستا. باڵانسی نوێ دەبێتە $0. تۆ ${(paymentUsd - currentBalanceUsd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} USD زیاتر پرداخت دەکەیت`
+                              : locale === 'ar'
+                              ? `تحذير: الدفع أكبر من رصيد العميل. سيكون الرصيد الجديد $0. أنت تدفع ${(paymentUsd - currentBalanceUsd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} USD إضافي`
+                              : `Warning: Payment exceeds customer balance. New balance will be $0. You are paying ${(paymentUsd - currentBalanceUsd).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} USD extra`
+                            }
+                          </span>
+                        </div>
+                      )}
+                      {paymentUsd > 0 && !willBeNegativeUsd && currentBalanceUsd > 0 && (
+                        <div className={cn("text-sm text-green-700 dark:text-green-300 mt-2", fontClass)}>
+                          {locale === 'ku'
+                            ? `باڵانسی ئێستا دەبێتە $${projectedBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} دوای پارەدان`
+                            : locale === 'ar'
+                            ? `سيكون رصيد العميل $${projectedBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} بعد الدفع`
+                            : `Customer balance will be $${projectedBalanceUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} after payment`
+                          }
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
             <div className="space-y-2">
               <Label htmlFor="paymentMethod" className={fontClass}>{t('detail.paymentDialog.paymentMethod')}</Label>
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
@@ -2073,6 +2347,100 @@ export function CustomerDetail({ customer, locale }: CustomerDetailProps) {
               ) : (
                 t('detail.paymentDialog.processPayment')
               )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Warning Confirmation Dialog */}
+      <AlertDialog open={isWarningDialogOpen} onOpenChange={setIsWarningDialogOpen}>
+        <AlertDialogContent 
+          className={cn("!max-w-[600px] w-[100vw] max-h-[90vh] overflow-y-auto", fontClass)} 
+          style={{ direction } as React.CSSProperties}
+        >
+          <AlertDialogHeader>
+            <div className="flex items-start justify-between">
+              <div>
+                <AlertDialogTitle 
+                  className={cn(direction === 'rtl' && 'text-right', fontClass, "text-xl flex items-center gap-2")}
+                  style={{ direction } as React.CSSProperties}
+                >
+                  <IconAlertTriangle className="h-5 w-5 text-yellow-600" />
+                  {locale === 'ku' ? 'ئاگاداری' : locale === 'ar' ? 'تحذير' : 'Warning'}
+                </AlertDialogTitle>
+                <AlertDialogDescription 
+                  className={cn(direction === 'rtl' && 'text-right', fontClass, "mt-1 whitespace-pre-line")}
+                  style={{ direction } as React.CSSProperties}
+                >
+                  {warningMessage}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setIsWarningDialogOpen(false)
+                setPendingPaymentCallback(null)
+              }}
+              disabled={isProcessingPayment}
+              className={fontClass}
+            >
+              {locale === 'ku' ? 'هەڵوەشاندنەوە' : locale === 'ar' ? 'إلغاء' : 'Cancel'}
+            </AlertDialogCancel>
+            <Button
+              onClick={() => {
+                if (pendingPaymentCallback) {
+                  pendingPaymentCallback()
+                }
+              }}
+              disabled={isProcessingPayment}
+              className={cn("bg-yellow-600 hover:bg-yellow-700", fontClass)}
+            >
+              {isProcessingPayment ? (
+                <>
+                  <Spinner className="mr-2 h-4 w-4" />
+                  {locale === 'ku' ? 'چالاکدەکات...' : locale === 'ar' ? 'جاري المعالجة...' : 'Processing...'}
+                </>
+              ) : (
+                locale === 'ku' ? 'بەردەوام بە' : locale === 'ar' ? 'متابعة' : 'Continue'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Error Dialog */}
+      <AlertDialog open={isErrorDialogOpen} onOpenChange={setIsErrorDialogOpen}>
+        <AlertDialogContent 
+          className={cn("!max-w-[500px] w-[100vw]", fontClass)} 
+          style={{ direction } as React.CSSProperties}
+        >
+          <AlertDialogHeader>
+            <div className="flex items-start justify-between">
+              <div>
+                <AlertDialogTitle 
+                  className={cn(direction === 'rtl' && 'text-right', fontClass, "text-xl flex items-center gap-2")}
+                  style={{ direction } as React.CSSProperties}
+                >
+                  <IconAlertCircle className="h-5 w-5 text-destructive" />
+                  {locale === 'ku' ? 'هەڵە' : locale === 'ar' ? 'خطأ' : 'Error'}
+                </AlertDialogTitle>
+                <AlertDialogDescription 
+                  className={cn(direction === 'rtl' && 'text-right', fontClass, "mt-1")}
+                  style={{ direction } as React.CSSProperties}
+                >
+                  {errorMessage}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              onClick={() => setIsErrorDialogOpen(false)}
+              className={fontClass}
+            >
+              {locale === 'ku' ? 'باشە' : locale === 'ar' ? 'حسناً' : 'OK'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

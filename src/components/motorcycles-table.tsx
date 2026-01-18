@@ -79,13 +79,8 @@ import { cn } from "@/lib/utils"
 // Motorcycle type based on Prisma schema
 type Motorcycle = {
   id: string
-  brand: string
-  model: string
+  name: string
   sku: string
-  year: number | null
-  engineSize: string | null
-  vin: string | null
-  color: string | null
   image: string | null
   attachment: string | null
   usdRetailPrice: number | string
@@ -95,6 +90,11 @@ type Motorcycle = {
   lowStockThreshold: number
   status: "IN_STOCK" | "RESERVED" | "SOLD" | "OUT_OF_STOCK"
   notes: string | null
+  categoryId: string | null
+  category: {
+    id: string
+    name: string
+  } | null
   createdAt: Date | string
   updatedAt: Date | string
 }
@@ -194,10 +194,14 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
     cell: ({ row }) => {
       const motorcycle = row.original
       const image = motorcycle.image
-      const brand = motorcycle.brand
-      const model = motorcycle.model
-      const initials = brand && model
-        ? `${brand[0]}${model[0]}`.toUpperCase()
+      const name = motorcycle.name
+      const initials = name
+        ? name
+            .split(' ')
+            .map(n => n[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 2)
         : 'MC'
 
       return (
@@ -208,7 +212,7 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
             router.push(`/${locale}/motorcycles/${motorcycle.id}`)
           }}
         >
-          <AvatarImage src={image || undefined} alt={`${brand} ${model}`} />
+          <AvatarImage src={image || undefined} alt={name} />
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
       )
@@ -254,13 +258,13 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
     enableResizing: true,
   },
   {
-    accessorKey: "brand",
+    accessorKey: "name",
     header: ({ column }) => (
-      <SortableHeader header={t('columns.brand')} column={column} fontClass={fontClass} />
+      <SortableHeader header={locale === "ku" ? "ناو" : locale === "ar" ? "الاسم" : "Name"} column={column} fontClass={fontClass} />
     ),
-    size: 120,
-    minSize: 100,
-    maxSize: 200,
+    size: 200,
+    minSize: 150,
+    maxSize: 300,
     cell: ({ row }) => {
       const motorcycle = row.original
       return (
@@ -271,52 +275,11 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
             router.push(`/${locale}/motorcycles/${motorcycle.id}`)
           }}
         >
-          {motorcycle.brand}
+          {motorcycle.name}
         </div>
       )
     },
     enableResizing: true,
-  },
-  {
-    accessorKey: "model",
-    header: ({ column }) => (
-      <SortableHeader header={t('columns.model')} column={column} fontClass={fontClass} />
-    ),
-    size: 150,
-    minSize: 120,
-    maxSize: 250,
-    cell: ({ row }) => {
-      const motorcycle = row.original
-      return (
-        <div 
-          className={cn("font-medium cursor-pointer hover:underline transition-all", fontClass)}
-          onClick={(e) => {
-            e.stopPropagation()
-            router.push(`/${locale}/motorcycles/${motorcycle.id}`)
-          }}
-        >
-          {motorcycle.model}
-        </div>
-      )
-    },
-    enableResizing: true,
-  },
-  {
-    accessorKey: "year",
-    header: ({ column }) => (
-      <SortableHeader header={t('columns.year')} column={column} fontClass={fontClass} />
-    ),
-    size: 80,
-    minSize: 70,
-    maxSize: 120,
-    cell: ({ row }) => {
-      const year = row.original.year
-      return year ? (
-        <div className={cn("text-sm", fontClass)}>{year}</div>
-      ) : (
-        <span className={cn("text-muted-foreground", fontClass)}>-</span>
-      )
-    },
   },
   {
     accessorKey: "createdAt",
@@ -341,6 +304,29 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
       )
     },
     enableResizing: true,
+  },
+  {
+    accessorKey: "category",
+    header: ({ column }) => (
+      <SortableHeader 
+        header={t("columns.category")} 
+        column={column} 
+        fontClass={fontClass} 
+      />
+    ),
+    size: 150,
+    minSize: 120,
+    maxSize: 250,
+    sortingFn: (rowA, rowB) => {
+      const catA = rowA.original.category?.name || ''
+      const catB = rowB.original.category?.name || ''
+      return catA.localeCompare(catB)
+    },
+    cell: ({ row }) => {
+      const category = row.original.category
+      if (!category) return <span className={cn("text-muted-foreground", fontClass)}>-</span>
+      return <Badge variant="outline" className={fontClass}>{category.name}</Badge>
+    },
   },
   {
     accessorKey: "usdRetailPrice",
@@ -484,6 +470,7 @@ export function MotorcyclesTable() {
 
   // Search and filter states
   const [search, setSearch] = React.useState("")
+  const [categoryFilter, setCategoryFilter] = React.useState<string>("")
   const [lowStockFilter, setLowStockFilter] = React.useState<boolean>(false)
   const [paginationMeta, setPaginationMeta] = React.useState({
     total: 0,
@@ -493,6 +480,27 @@ export function MotorcyclesTable() {
   const [editingMotorcycle, setEditingMotorcycle] = React.useState<Motorcycle | null>(null)
   const [deletingMotorcycle, setDeletingMotorcycle] = React.useState<Motorcycle | null>(null)
   const [isPrintDialogOpen, setIsPrintDialogOpen] = React.useState(false)
+  const [categories, setCategories] = React.useState<
+    { id: string; name: string }[]
+  >([])
+
+  // Fetch motorcycle categories function
+  const fetchCategories = React.useCallback(async () => {
+    try {
+      const response = await fetch("/api/motorcycle-categories")
+      const data = await response.json()
+      if (data.categories) {
+        setCategories(data.categories)
+      }
+    } catch (error) {
+      console.error('Error fetching motorcycle categories:', error)
+    }
+  }, [])
+
+  // Fetch categories on mount
+  React.useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   // Memoize sorting values to prevent infinite loops
   const sortBy = React.useMemo(() => sorting.length > 0 ? sorting[0].id : null, [sorting])
@@ -506,6 +514,7 @@ export function MotorcyclesTable() {
         page: String(pagination.pageIndex + 1),
         pageSize: String(pagination.pageSize),
         ...(search && { search }),
+        ...(categoryFilter && { categoryId: categoryFilter }),
         ...(lowStockFilter && { lowStock: 'true' }),
         ...(sortBy && sortOrder && {
           sortBy,
@@ -530,7 +539,7 @@ export function MotorcyclesTable() {
     } finally {
       setLoading(false)
     }
-  }, [pagination.pageIndex, pagination.pageSize, search, lowStockFilter, sortBy, sortOrder])
+  }, [pagination.pageIndex, pagination.pageSize, search, categoryFilter, lowStockFilter, sortBy, sortOrder])
 
   React.useEffect(() => {
     fetchMotorcycles()
@@ -598,6 +607,26 @@ export function MotorcyclesTable() {
               className={cn("pl-9", fontClass)}
             />
           </div>
+
+          <Select
+            value={categoryFilter || "all"}
+            onValueChange={(value) => {
+              setCategoryFilter(value === "all" ? "" : value)
+              setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+            }}
+          >
+            <SelectTrigger className={cn("w-full sm:w-[200px]", fontClass)}>
+              <SelectValue placeholder={t("allCategories")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("allCategories")}</SelectItem>
+              {categories.map((cat) => (
+                <SelectItem key={cat.id} value={cat.id}>
+                  {cat.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <Button
             variant={lowStockFilter ? "default" : "outline"}
@@ -825,10 +854,12 @@ export function MotorcyclesTable() {
           setEditingMotorcycle(null)
           fetchMotorcycles()
         }}
+        categories={categories}
         motorcycle={editingMotorcycle ? {
           ...editingMotorcycle,
           status: editingMotorcycle.status || ('IN_STOCK' as const)
         } : null}
+        onCategoriesChange={fetchCategories}
       />
 
       <DeleteMotorcycleDialog
@@ -840,7 +871,7 @@ export function MotorcyclesTable() {
           fetchMotorcycles()
           setDeletingMotorcycle(null)
         }}
-        motorcycleName={deletingMotorcycle ? `${deletingMotorcycle.brand} ${deletingMotorcycle.model}` : ''}
+        motorcycleName={deletingMotorcycle ? deletingMotorcycle.name : ''}
         motorcycleId={deletingMotorcycle?.id || ''}
       />
 

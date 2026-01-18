@@ -5,7 +5,6 @@ import { prisma } from '@/lib/db'
 import { writeFile, mkdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import sharp from 'sharp'
 
 export async function GET(
   request: NextRequest,
@@ -235,14 +234,22 @@ export async function PUT(
       const bytes = await imageFile.arrayBuffer()
       const buffer = Buffer.from(bytes)
 
-      // Compress image
-      const compressedBuffer = await sharp(buffer)
-        .resize(800, 800, {
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .jpeg({ quality: 85, progressive: true })
-        .toBuffer()
+      // Compress image (lazy load sharp only when needed)
+      let compressedBuffer: Buffer
+      try {
+        const sharp = (await import('sharp')).default
+        compressedBuffer = await sharp(buffer)
+          .resize(800, 800, {
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .jpeg({ quality: 85, progressive: true })
+          .toBuffer()
+      } catch (sharpError) {
+        // If sharp fails to load (e.g., Windows Application Control), use original buffer
+        console.warn('Sharp not available, using original image:', sharpError)
+        compressedBuffer = buffer
+      }
 
       // Create customers directory
       const customersDir = join(process.cwd(), 'public', 'customers')

@@ -29,25 +29,63 @@ export async function GET() {
     })
 
     // Get all motorcycles with low stock threshold > 0
-    const allMotorcycles = await prisma.motorcycle.findMany({
-      where: {
-        status: {
-          in: ['IN_STOCK', 'RESERVED'],
+    let allMotorcycles: any[] = []
+    try {
+      // Try new schema first (with name field)
+      allMotorcycles = await prisma.motorcycle.findMany({
+        where: {
+          status: {
+            in: ['IN_STOCK', 'RESERVED'],
+          },
+          lowStockThreshold: {
+            gt: 0,
+          },
         },
-        lowStockThreshold: {
-          gt: 0,
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          stockQuantity: true,
+          lowStockThreshold: true,
+          image: true,
         },
-      },
-      select: {
-        id: true,
-        brand: true,
-        model: true,
-        sku: true,
-        stockQuantity: true,
-        lowStockThreshold: true,
-        image: true,
-      },
-    })
+      })
+    } catch (schemaError: any) {
+      // If new schema fails, try old schema (brand/model)
+      if (schemaError?.message?.includes('name') || schemaError?.code === 'P2009') {
+        try {
+          const oldSchemaMotorcycles = await (prisma.motorcycle.findMany as any)({
+            where: {
+              status: {
+                in: ['IN_STOCK', 'RESERVED'],
+              },
+              lowStockThreshold: {
+                gt: 0,
+              },
+            },
+            select: {
+              id: true,
+              brand: true,
+              model: true,
+              sku: true,
+              stockQuantity: true,
+              lowStockThreshold: true,
+              image: true,
+            },
+          })
+          // Transform old schema to new schema format
+          allMotorcycles = oldSchemaMotorcycles.map((m: any) => ({
+            ...m,
+            name: `${m.brand || ''} ${m.model || ''}`.trim() || 'Motorcycle',
+          }))
+        } catch {
+          // If both fail, use empty array
+          allMotorcycles = []
+        }
+      } else {
+        throw schemaError
+      }
+    }
 
     // Filter products where stockQuantity <= lowStockThreshold
     const lowStockProducts = allProducts
@@ -66,7 +104,7 @@ export async function GET() {
       .map((motorcycle) => ({
         ...motorcycle,
         type: 'motorcycle' as const,
-        displayName: `${motorcycle.brand} ${motorcycle.model}`,
+        displayName: (motorcycle as any).name || 'Motorcycle',
       }))
 
     // Get customers with overdue payments

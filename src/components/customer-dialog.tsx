@@ -231,6 +231,63 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
     setExistingAttachments(prev => prev.filter((_, i) => i !== index))
   }
 
+  // Check if SKU is already in use by another customer
+  const checkSkuUniqueness = async (skuToCheck: string, excludeCustomerId?: string): Promise<boolean> => {
+    if (!skuToCheck || skuToCheck.trim() === '') return false
+    
+    try {
+      // Search for customers with this SKU
+      const response = await fetch(`/api/customers?search=${encodeURIComponent(skuToCheck.trim())}&pageSize=100`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.customers && Array.isArray(data.customers)) {
+          // Check if any customer (excluding current one if editing) has this SKU
+          const existingCustomer = data.customers.find((c: any) => {
+            return c.sku === skuToCheck.trim() && (!excludeCustomerId || c.id !== excludeCustomerId)
+          })
+          return !existingCustomer // Returns true if unique, false if duplicate
+        }
+      }
+    } catch (error) {
+      console.warn('Error checking SKU uniqueness:', error)
+      // If check fails, allow it (server will validate)
+      return true
+    }
+    return true
+  }
+
+  // Generate a unique SKU code
+  const generateUniqueSku = async (): Promise<string> => {
+    const excludeId = isEditMode ? customer?.id : undefined
+    let attempts = 0
+    const maxAttempts = 50
+    
+    while (attempts < maxAttempts) {
+      const newCode = generateSkuCode()
+      const isUnique = await checkSkuUniqueness(newCode, excludeId)
+      if (isUnique) {
+        return newCode
+      }
+      attempts++
+    }
+    
+    // If we couldn't find a unique code after max attempts, return a random one
+    // The server will handle the validation
+    return generateSkuCode()
+  }
+
+  const handleRegenerateCode = async () => {
+    try {
+      const newCode = await generateUniqueSku()
+      setSku(newCode)
+      setError(null)
+    } catch (error) {
+      console.error('Error generating unique code:', error)
+      // Fallback to simple generation
+      setSku(generateSkuCode())
+    }
+  }
+
   const handleSave = async () => {
     setIsLoading(true)
     setError(null)
@@ -251,6 +308,15 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
       const skuNum = parseInt(sku.trim())
       if (isNaN(skuNum) || skuNum < 1000 || skuNum > 9999) {
         setError('Customer code must be a number between 1000 and 9999')
+        setIsLoading(false)
+        return
+      }
+
+      // Check SKU uniqueness before submitting
+      const excludeId = isEditMode ? customer?.id : undefined
+      const isUnique = await checkSkuUniqueness(sku.trim(), excludeId)
+      if (!isUnique) {
+        setError(t('dialog.codeDuplicate') || 'This code is already in use by another customer. Please choose a different code.')
         setIsLoading(false)
         return
       }
@@ -460,18 +526,16 @@ export function CustomerDialog({ open, onOpenChange, onSuccess, addresses = [], 
                       className={fontClass}
                       maxLength={4}
                     />
-                      {!isEditMode && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={() => setSku(generateSkuCode())}
-                          title="Generate new code"
-                          className="flex-shrink-0"
-                        >
-                          <IconRefresh className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleRegenerateCode}
+                        title={isEditMode ? t('dialog.regenerateCode') || 'Regenerate code' : t('dialog.generateCode') || 'Generate new code'}
+                        className="flex-shrink-0"
+                      >
+                        <IconRefresh className="h-4 w-4" />
+                      </Button>
                   </div>
                   </div>
                 </div>
