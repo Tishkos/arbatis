@@ -881,6 +881,14 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         z-index: 1000;
         line-height: 1.2;
       }
+      
+      .print-footer .page-number::after {
+        content: counter(page);
+      }
+      
+      .print-footer .total-pages::after {
+        content: counter(pages);
+      }
     }
     
     .print-footer {
@@ -1007,37 +1015,95 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
   </div>
   
   <div class="print-footer">
-    <span>لاپەڕەی <span class="page-number">1</span>/<span class="total-pages">1</span></span>${invoicerName ? ` <span style="color: #999; margin-left: 10px;">${escapeHtml(invoicerName)}</span>` : ''}
+    <span>لاپەڕەی <span class="page-number"></span>/<span class="total-pages"></span></span>${invoicerName ? ` <span style="color: #999; margin-left: 10px;">${escapeHtml(invoicerName)}</span>` : ''}
   </div>
   
   <script>
     window.onload = function() {
-      // Calculate total pages (approximate)
-      const totalPages = Math.max(1, Math.ceil(document.body.scrollHeight / 1123)); // A4 height in pixels at 96dpi
-      
-      // Update page numbers
-      document.querySelectorAll('.total-pages').forEach(el => {
-        el.textContent = String(totalPages);
-      });
-      
-      // Add print styles for footer
+      // Add print styles for footer with CSS counters
       const style = document.createElement('style');
       style.textContent = \`
         @media print {
+          @page {
+            margin-bottom: 3mm;
+            counter-increment: page;
+          }
+          
+          @page:first {
+            counter-reset: page 1;
+          }
+          
           .print-footer {
             display: block !important;
           }
           
-          @page {
-            margin-bottom: 3mm;
+          .print-footer .page-number::after {
+            content: counter(page);
+          }
+          
+          .print-footer .total-pages::after {
+            content: counter(pages);
           }
         }
       \`;
       document.head.appendChild(style);
       
+      // Calculate approximate total pages for screen preview
+      function calculateTotalPages() {
+        // A4 page dimensions
+        const A4_HEIGHT_MM = 297;
+        const A4_WIDTH_MM = 210;
+        const MARGIN_TOP_MM = 0;
+        const MARGIN_BOTTOM_MM = 3;
+        const HEADER_HEIGHT_MM = backgroundImageDataUrl ? 63 : 15;
+        const FOOTER_HEIGHT_MM = 5;
+        
+        // Calculate usable page height
+        const usableHeightMM = A4_HEIGHT_MM - MARGIN_TOP_MM - MARGIN_BOTTOM_MM - HEADER_HEIGHT_MM - FOOTER_HEIGHT_MM;
+        
+        // Convert to pixels (assuming 96 DPI)
+        const MM_TO_PX = 3.779527559;
+        const usableHeightPX = usableHeightMM * MM_TO_PX;
+        
+        // Get content height
+        const container = document.querySelector('.invoice-container');
+        const contentArea = document.querySelector('.content-area');
+        const contentHeight = contentArea ? contentArea.scrollHeight : (container ? container.scrollHeight : document.body.scrollHeight);
+        
+        // Calculate pages: first page has header, subsequent pages don't
+        const firstPageContent = usableHeightPX;
+        let totalPages = 1;
+        let remainingHeight = contentHeight;
+        
+        if (remainingHeight > firstPageContent) {
+          remainingHeight -= firstPageContent;
+          totalPages += Math.ceil(remainingHeight / (usableHeightPX + HEADER_HEIGHT_MM * MM_TO_PX));
+        }
+        
+        totalPages = Math.max(1, totalPages);
+        
+        // Update for screen preview (CSS counters only work in print)
+        document.querySelectorAll('.total-pages').forEach(el => {
+          if (!el.textContent || el.textContent.trim() === '') {
+            el.textContent = String(totalPages);
+          }
+        });
+        document.querySelectorAll('.page-number').forEach(el => {
+          if (!el.textContent || el.textContent.trim() === '') {
+            el.textContent = '1';
+          }
+        });
+      }
+      
+      // Calculate pages after content is fully rendered
       setTimeout(function() {
-        window.print();
-      }, 600);
+        calculateTotalPages();
+        
+        // Trigger print after calculation
+        setTimeout(function() {
+          window.print();
+        }, 200);
+      }, 500);
     };
   </script>
 </body>
