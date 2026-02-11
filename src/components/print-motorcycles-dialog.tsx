@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { getServeUrl } from '@/lib/serve-url'
 import * as React from 'react'
 
 type Motorcycle = {
@@ -438,7 +439,7 @@ export function PrintMotorcyclesDialog({
                             <td className="border" style={{ padding: `${cellPadding * 2}px`, width: `${(imageSize + imagePadding * 2) * 3.78}px` }}>
                               {motorcycle.image ? (
                                 <img 
-                                  src={motorcycle.image} 
+                                  src={getServeUrl(motorcycle.image) || motorcycle.image} 
                                   alt={motorcycle.name || `${motorcycle.brand || ''} ${motorcycle.model || ''}`.trim() || 'Motorcycle'}
                                   className="object-cover rounded"
                                   style={{ 
@@ -658,17 +659,11 @@ async function generateHTML(
   // Convert relative image URLs to absolute URLs
   const getAbsoluteImageUrl = (imageUrl: string | null): string => {
     if (!imageUrl) return ''
-    // Handle data URLs (base64 images) - return as is
-    if (imageUrl.startsWith('data:image/')) {
-      return imageUrl
-    }
-    // Handle absolute URLs - return as is
-    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-      return imageUrl
-    }
-    // Convert relative URL to absolute
+    if (imageUrl.startsWith('data:image/')) return imageUrl
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    return `${origin}${imageUrl.startsWith('/') ? imageUrl : '/' + imageUrl}`
+    const path = getServeUrl(imageUrl) || (imageUrl.startsWith('/') ? imageUrl : '/' + imageUrl)
+    return `${origin}${path.startsWith('/') ? path : '/' + path}`
   }
 
   // Escape HTML to prevent XSS

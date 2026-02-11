@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { IconArrowLeft, IconPaperclip, IconCalendar, IconUser, IconEdit, IconTrash, IconFile, IconDownload, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
+import { getServeUrl } from '@/lib/serve-url'
 import { format } from 'date-fns'
 import { useState, useEffect, useTransition, useRef, useCallback } from 'react'
 import { DeleteProductDialog } from './delete-product-dialog'
@@ -425,7 +426,7 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
                   <Avatar className="h-48 w-48">
                     <AvatarImage 
                       key={`${product.image || 'no-image'}-${imageRefreshKey}`} 
-                      src={product.image ? `${product.image}?v=${imageRefreshKey}` : undefined} 
+                      src={product.image ? `${getServeUrl(product.image) ?? product.image}?v=${imageRefreshKey}` : undefined} 
                       alt={product.name} 
                     />
                     <AvatarFallback className="text-4xl">{initials}</AvatarFallback>
@@ -712,7 +713,7 @@ export function ProductDetail({ product, locale }: ProductDetailProps) {
                                 variant="ghost"
                                 size="sm"
                                 className="h-8 text-xs"
-                                onClick={() => window.open(attachment.url, '_blank')}
+                                onClick={() => window.open(getServeUrl(attachment.url) || attachment.url, '_blank')}
                               >
                                 <IconDownload className="h-3 w-3 mr-1" />
                                 {t('detail.view')}

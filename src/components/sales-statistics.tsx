@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { IconAlertCircle, IconUsers, IconPackage, IconShoppingCart, IconTrendingUp } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
+import { getServeUrl } from "@/lib/serve-url"
 import Link from "next/link"
 
 interface SalesStatisticsProps {
@@ -73,7 +74,7 @@ export function SalesStatistics({ locale }: SalesStatisticsProps) {
                   className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors"
                 >
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src={product.image || undefined} />
+                    <AvatarImage src={getServeUrl(product.image) || product.image || undefined} />
                     <AvatarFallback>
                       <IconPackage className="h-4 w-4" />
                     </AvatarFallback>

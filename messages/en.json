@@ -655,6 +655,7 @@
       "productImage": "Product Image",
       "basicInformation": "Basic Information",
       "sku": "SKU",
+      "status": "Status",
       "category": "Category",
       "noCategory": "No Category",
       "stockQuantity": "Stock Quantity",

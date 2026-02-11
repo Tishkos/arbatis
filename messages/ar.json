@@ -652,6 +652,7 @@
       "productImage": "صورة المنتج",
       "basicInformation": "المعلومات الأساسية",
       "sku": "الكود",
+      "status": "الحالة",
       "category": "الفئة",
       "noCategory": "بدون فئة",
       "stockQuantity": "كمية المخزون",

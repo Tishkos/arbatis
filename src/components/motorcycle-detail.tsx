@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { IconArrowLeft, IconPaperclip, IconCalendar, IconUser, IconEdit, IconTrash, IconFile, IconDownload, IconX } from '@tabler/icons-react'
 import { cn } from '@/lib/utils'
+import { getServeUrl } from '@/lib/serve-url'
 import { format } from 'date-fns'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { MotorcycleDialog } from './motorcycle-dialog'
@@ -417,7 +418,7 @@ export function MotorcycleDetail({ motorcycle, locale }: MotorcycleDetailProps) 
                 </CardHeader>
                 <CardContent className="flex flex-col items-center gap-4">
                   <Avatar className="h-48 w-48">
-                    <AvatarImage src={motorcycle.image || undefined} alt={motorcycle.name} />
+                    <AvatarImage src={getServeUrl(motorcycle.image) || motorcycle.image || undefined} alt={motorcycle.name} />
                     <AvatarFallback className="text-4xl">{initials}</AvatarFallback>
                   </Avatar>
                 </CardContent>

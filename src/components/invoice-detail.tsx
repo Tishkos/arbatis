@@ -462,9 +462,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
         // Format: http://localhost:3000/products/{sku}.jpg (e.g., f05a9j.jpg for SKU F05A9J)
         if (sku) {
           const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
-          const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
-          
-          // Check if image exists
+          const potentialImageUrl = origin + '/api/serve/products/' + skuCode + '.jpg'
           try {
             const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
             if (imgResponse.ok && imgResponse.status === 200) {
@@ -474,7 +472,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
             // Image doesn't exist, leave imageUrl as null
           }
         }
-      } 
+      }
       // Check if it's a motorcycle item
       else if (item.notes?.toUpperCase().trim().startsWith('MOTORCYCLE:')) {
         const motorcycleId = item.notes.replace(/^MOTORCYCLE:/i, '').trim()
@@ -496,9 +494,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                 // Construct motorcycle image path from SKU
                 if (sku) {
                   const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
-                  const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
-                  
-                  // Check if image exists
+                  const potentialImageUrl = origin + '/api/serve/products/' + skuCode + '.jpg'
                   try {
                     const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
                     if (imgResponse.ok && imgResponse.status === 200) {
@@ -544,7 +540,7 @@ export function InvoiceDetail({ invoice, locale }: InvoiceDetailProps) {
                 // Try to get image URL if SKU exists
                 if (sku) {
                   const skuCode = sku.toLowerCase().trim().replace(/[^a-z0-9]/g, '')
-                  const potentialImageUrl = origin + '/products/' + skuCode + '.jpg'
+                  const potentialImageUrl = origin + '/api/serve/products/' + skuCode + '.jpg'
                   try {
                     const imgResponse = await fetch(potentialImageUrl, { method: 'HEAD' })
                     if (imgResponse.ok && imgResponse.status === 200) {

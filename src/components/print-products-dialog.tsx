@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { getServeUrl } from '@/lib/serve-url'
 import * as React from 'react'
 
 type Product = {
@@ -811,7 +812,7 @@ export function PrintProductsDialog({
                             <td className="border" style={{ padding: `${cellPadding * 2}px`, width: `${(imageSize + imagePadding * 2) * 3.78}px` }}>
                               {product.image ? (
                                 <img 
-                                  src={product.image} 
+                                  src={getServeUrl(product.image) || product.image} 
                                   alt={product.name}
                                   className="object-cover rounded"
                                   style={{ 
@@ -1019,20 +1020,14 @@ async function generateHTML(
     return translatedLabel !== translationKey ? translatedLabel : (allColumns.find(c => c.id === colId)?.label || colId)
   })
 
-  // Convert relative image URLs to absolute URLs
+  // Convert relative image URLs to absolute URLs (use serve API for uploads so they load dynamically)
   const getAbsoluteImageUrl = (imageUrl: string | null): string => {
     if (!imageUrl) return ''
-    // Handle data URLs (base64 images) - return as is
-    if (imageUrl.startsWith('data:image/')) {
-      return imageUrl
-    }
-    // Handle absolute URLs - return as is
-    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-      return imageUrl
-    }
-    // Convert relative URL to absolute
+    if (imageUrl.startsWith('data:image/')) return imageUrl
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
-    return `${origin}${imageUrl.startsWith('/') ? imageUrl : '/' + imageUrl}`
+    const path = getServeUrl(imageUrl) || (imageUrl.startsWith('/') ? imageUrl : '/' + imageUrl)
+    return `${origin}${path.startsWith('/') ? path : '/' + path}`
   }
 
   // Escape HTML to prevent XSS

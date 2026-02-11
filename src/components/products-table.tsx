@@ -28,6 +28,7 @@ import {
   type ColumnSizingState,
 } from "@tanstack/react-table"
 import { useParams, useRouter } from "next/navigation"
+import { getServeUrl } from "@/lib/serve-url"
 import { useTranslations } from "next-intl"
 import { getTextDirection } from "@/lib/i18n"
 import { format } from 'date-fns'
@@ -210,7 +211,7 @@ const createColumns = (fontClass: string, router: any, locale: string, t: any): 
             router.push(`/${locale}/products/${product.id}`)
           }}
         >
-          <AvatarImage src={image || undefined} alt={name} />
+          <AvatarImage src={getServeUrl(image) || undefined} alt={name} />
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
       )
